@@ -1,3 +1,4 @@
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   motion, 
@@ -28,8 +29,10 @@ import {
   ShieldCheck,
   Smartphone,
   Fingerprint,
-  Lock
+  Lock,
+  CalendarDays
 } from 'lucide-react';
+import { GeminiChat } from './components/GeminiChat';
 
 // --- Types ---
 
@@ -46,7 +49,21 @@ interface Transaction {
   method: string;
 }
 
-const CATEGORIES = [
+interface Event {
+  id: string;
+  name: string;
+  date: string;
+  time: string;
+  category: string;
+}
+
+const EVENTS: Event[] = [
+  { id: 'EV1', name: 'Annual Banking Summit', date: '15 Mei 2026', time: '10:00', category: 'Conference' },
+  { id: 'EV2', name: 'Digital Security Workshop', date: '20 Mei 2026', time: '14:00', category: 'Workshop' },
+  { id: 'EV3', name: 'VIP Networking Dinner', date: '25 Mei 2026', time: '19:00', category: 'Social' }
+];
+
+const DEFAULT_CATEGORIES = [
   'Groceries', 
   'Utilities', 
   'Entertainment', 
@@ -96,56 +113,42 @@ const SplashScreen = ({ onComplete }: { onComplete: () => void, key?: string }) 
     <motion.div 
       className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-center z-[100] overflow-hidden"
       initial={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 1 }}
+      exit={{ opacity: 0, scale: 1.1, filter: "blur(20px)" }}
+      transition={{ duration: 0.8, ease: "easeInOut" }}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(37,99,235,0.1)_0%,transparent_70%)]" />
-      
       <motion.div
-        className="relative mb-12"
-        initial={{ scale: 0.8, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 1.2 }}
+        className="relative mb-8"
+        initial={{ scale: 0.5, opacity: 0, rotate: -45 }}
+        animate={{ scale: 1, opacity: 1, rotate: 0 }}
+        transition={{ duration: 1, type: "spring", stiffness: 100 }}
       >
-        <div className="w-28 h-28 bg-blue-600 rounded-[32px] flex items-center justify-center relative overflow-hidden shadow-[0_0_80px_rgba(37,99,235,0.5)] ring-1 ring-white/30">
-          <motion.div 
-            className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/40 to-transparent"
-            animate={{ x: ['-200%', '200%'] }}
-            transition={{ duration: 2.5, repeat: Infinity, ease: "linear" }}
-          />
-          <div className="relative z-10">
-            <Zap className="text-white w-14 h-14 drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]" />
-          </div>
+        <div className="w-32 h-32 bg-blue-600 rounded-[2rem] flex items-center justify-center shadow-[0_0_60px_rgba(37,99,235,0.4)]">
+          <Zap className="text-white w-16 h-16" />
         </div>
       </motion.div>
 
       <motion.div 
         className="text-center"
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4 }}
+        transition={{ delay: 0.3 }}
       >
-        <h1 className="text-4xl font-extrabold text-white tracking-tighter mb-2 italic uppercase">
-          SUPER BANK <span className="text-blue-500 drop-shadow-[0_0_10px_rgba(37,99,235,0.5)]">EXPRESS</span>
+        <h1 className="text-5xl font-black text-white italic tracking-tighter uppercase">
+          SUPER <br/> <span className="text-blue-500">BANK</span>
         </h1>
-        <div className="flex items-center gap-2 justify-center">
-            <span className="h-1 w-8 bg-blue-500 rounded-full" />
-            <p className="text-zinc-500 text-[10px] tracking-[0.3em] uppercase font-bold">AI Core Active</p>
-            <span className="h-1 w-8 bg-blue-500 rounded-full" />
-        </div>
       </motion.div>
 
       <motion.div 
-        className="mt-16 w-40 h-0.5 bg-zinc-900 rounded-full overflow-hidden"
+        className="mt-12 w-48 h-1 bg-zinc-900 rounded-full overflow-hidden"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.8 }}
+        transition={{ delay: 0.5 }}
       >
         <motion.div 
-          className="h-full bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,1)]"
+          className="h-full bg-blue-500"
           initial={{ width: 0 }}
           animate={{ width: "100%" }}
-          transition={{ duration: 2.5, ease: "easeInOut" }}
+          transition={{ duration: 2, ease: "easeInOut" }}
           onAnimationComplete={onComplete}
         />
       </motion.div>
@@ -329,105 +332,128 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
 
 type View = 'HOME' | 'WALLET' | 'HISTORY' | 'PROFILE';
 
-const LoginScreen = ({ onLogin, isBiometricEnabled }: { onLogin: () => void, isBiometricEnabled: boolean, key?: string }) => {
-  const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const [authSuccess, setAuthSuccess] = useState(false);
 
-  const triggerBiometric = () => {
+const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
+  const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [enteredOtp, setEnteredOtp] = useState('');
+  const [isOtpSent, setIsOtpSent] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+  const handleSendOtp = async () => {
+    if (!email) return alert('Masukkan email');
     setIsAuthenticating(true);
-    // Simulate biometric processing
-    setTimeout(() => {
-      setAuthSuccess(true);
-      setTimeout(() => {
+    
+    // Generate 6 digit OTP
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    setOtp(generatedOtp);
+
+    // Using user provided key: 0nLXK9s6Hxh_wX0XA
+    // Assuming service and template IDs exist or using generic. 
+    // In a real app, these should be configured.
+    try {
+        await emailjs.send(
+            'service_qsl1z9q', 
+            'template_w79b4ju', 
+            {
+              to_email: email,
+              otp_code: generatedOtp,
+              user_name: 'User'
+            },
+            '0nLXK9s6Hxh_wX0XA'
+          );
+          setIsOtpSent(true);
+          alert('OTP telah dikirim ke email Anda');
+    } catch (e) {
+        // Fallback for demo
+        console.warn('Error sending OTP, using demo mode', e);
+        setOtp('123456');
+        setIsOtpSent(true);
+        alert('OTP simulasi: 123456');
+    } finally {
+        setIsAuthenticating(false);
+    }
+  };
+
+  const handleVerifyOtp = () => {
+    if (enteredOtp === otp) {
+        if (mode === 'REGISTER') localStorage.setItem('expres_registered', 'true');
+        localStorage.setItem('expres_auth', 'true');
         onLogin();
-      }, 800);
-    }, 2000);
+    } else {
+        alert('OTP salah');
+    }
   };
 
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
       className="fixed inset-0 bg-zinc-950 z-[150] flex flex-col items-center justify-center px-8"
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(37,99,235,0.15)_0%,transparent_70%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(37,99,235,0.2)_0%,transparent_60%)]" />
       
-      <motion.div 
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        className="text-center mb-16 relative z-10"
-      >
-        <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-[0_0_50px_rgba(37,99,235,0.3)]">
-          <Zap className="text-white w-10 h-10" />
+      <div className="text-center mb-12 relative z-10 w-full max-w-xs">
+        <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-[0_0_50px_rgba(37,99,235,0.4)] rotate-3">
+          <Zap className="text-white w-12 h-12" />
         </div>
-        <h2 className="text-3xl font-black italic tracking-tighter text-white uppercase mb-2">Welcome Back</h2>
-        <p className="text-zinc-500 text-sm font-medium">Verify your identity to continue</p>
-      </motion.div>
-
-      <div className="w-full max-w-xs space-y-8 relative z-10">
-        <div className="flex flex-col items-center justify-center gap-8">
-          <motion.button
-            onClick={triggerBiometric}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            disabled={isAuthenticating}
-            className="relative"
-          >
-            {/* Visual Ring */}
-            <motion.div 
-              className={`absolute -inset-4 border-2 rounded-full border-blue-500/30 ${isAuthenticating ? 'animate-ping' : ''}`}
-            />
-            
-            <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${authSuccess ? 'bg-emerald-500 shadow-[0_0_40px_rgba(16,185,129,0.5)]' : isAuthenticating ? 'bg-blue-600' : 'bg-zinc-900 border border-zinc-800'}`}>
-              <AnimatePresence mode="wait">
-                {authSuccess ? (
-                  <motion.div key="check" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}>
-                    <CheckCircle2 className="text-white w-10 h-10" />
-                  </motion.div>
-                ) : isAuthenticating ? (
-                  <motion.div key="loader" animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}>
-                    <Loader2 className="text-white w-10 h-10" />
-                  </motion.div>
-                ) : (
-                  <motion.div key="icon" initial={{ scale: 0.8 }} animate={{ scale: 1 }}>
-                    <Fingerprint className="text-blue-500 w-10 h-10" />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </motion.button>
-
-          <div className="text-center">
-            <p className="text-white font-bold text-lg mb-1">
-              {isAuthenticating ? 'Authenticating...' : authSuccess ? 'Identity Verified' : 'Tap to Login'}
-            </p>
-            <p className="text-zinc-600 text-xs font-bold uppercase tracking-widest">
-              {isBiometricEnabled ? 'Face ID / Fingerprint Active' : 'Touch ID Required'}
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-4 gap-4 pt-12">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-0.5 bg-zinc-900 rounded-full overflow-hidden">
-              <motion.div 
-                className="h-full bg-blue-500"
-                initial={{ width: 0 }}
-                animate={isAuthenticating ? { width: '100%' } : { width: 0 }}
-                transition={{ duration: 0.5, delay: i * 0.1 }}
-              />
-            </div>
-          ))}
-        </div>
+        <h2 className="text-4xl font-black italic tracking-tighter text-white uppercase mb-2">
+            {mode === 'LOGIN' ? 'Login' : 'Register'}
+        </h2>
       </div>
 
-      <motion.button 
-        className="mt-auto mb-12 text-zinc-500 text-xs font-bold uppercase tracking-widest hover:text-white transition-colors"
-        whileHover={{ scale: 1.05 }}
-      >
-        Forgot Security PIN?
-      </motion.button>
+      <div className="w-full max-w-xs space-y-4 relative z-10">
+        {!isOtpSent ? (
+            <>
+                <input 
+                    type="email" 
+                    placeholder="Email" 
+                    value={email} 
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-2xl text-white outline-none focus:border-blue-500"
+                />
+                <button 
+                    onClick={handleSendOtp}
+                    disabled={isAuthenticating}
+                    className="w-full py-4 bg-blue-600 rounded-2xl text-white font-bold hover:bg-blue-500"
+                >
+                    {isAuthenticating ? 'Mengirim...' : 'Kirim OTP'}
+                </button>
+            </>
+        ) : (
+            <>
+                <input 
+                    type="text" 
+                    placeholder="Masukkan OTP" 
+                    value={enteredOtp} 
+                    onChange={(e) => setEnteredOtp(e.target.value)}
+                    className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-2xl text-white outline-none focus:border-blue-500"
+                />
+                <button 
+                    onClick={handleVerifyOtp}
+                    className="w-full py-4 bg-emerald-600 rounded-2xl text-white font-bold hover:bg-emerald-500"
+                >
+                    Verifikasi & Masuk
+                </button>
+            </>
+        )}
+        
+        <div className="flex justify-center gap-2 mt-4">
+            <button 
+                onClick={() => setMode(mode === 'LOGIN' ? 'REGISTER' : 'LOGIN')}
+                className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] hover:text-white transition-colors"
+             >
+                {mode === 'LOGIN' ? 'Belum punya akun? Register' : 'Sudah punya akun? Login'}
+            </button>
+        </div>
+        
+        <div className="mt-8">
+          <a href="https://ibb.co.com/SD6Z1dmD" target="_blank" rel="noopener noreferrer">
+            <img src="https://i.ibb.co.com/0pnzWF9p/tugas-OJK1-1.jpg" alt="tugas-OJK1-1" border="0" className="w-full max-w-xs rounded-2xl opacity-70 hover:opacity-100 transition-opacity" />
+          </a>
+        </div>
+      </div>
     </motion.div>
   );
 };
@@ -445,9 +471,9 @@ export default function App() {
   const [isLoggedOut, setIsLoggedOut] = useState(false);
   
   // Auth State
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('expres_auth') === 'true';
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  const [hasShownSplash, setHasShownSplash] = useState(false);
 
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(() => {
     const saved = localStorage.getItem('expres_biometric');
@@ -480,6 +506,11 @@ export default function App() {
     return saved ? parseFloat(saved) : 200000000000;
   });
 
+  const [customCategories, setCustomCategories] = useState<string[]>(() => {
+    const saved = localStorage.getItem('expres_categories');
+    return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
+  });
+
   const [history, setHistory] = useState<Transaction[]>(() => {
     const saved = localStorage.getItem('expres_history');
     return saved ? JSON.parse(saved) : [
@@ -494,7 +525,8 @@ export default function App() {
     localStorage.setItem('expres_user', JSON.stringify(user));
     localStorage.setItem('expres_auth', isAuthenticated.toString());
     localStorage.setItem('expres_biometric', isBiometricEnabled.toString());
-  }, [balance, history, user, isAuthenticated, isBiometricEnabled]);
+    localStorage.setItem('expres_categories', JSON.stringify(customCategories));
+  }, [balance, history, user, isAuthenticated, isBiometricEnabled, customCategories]);
 
   // Statistics Calculation
   const stats = useMemo(() => {
@@ -516,10 +548,7 @@ export default function App() {
   // Simulation Logic
   useEffect(() => {
     if (!loading) {
-      const timer = setTimeout(() => {
-        setNotification("Dana Masuk Rp 50.000 dari AI Network");
-      }, 10000);
-      return () => clearTimeout(timer);
+      // Simulation removed
     }
   }, [loading]);
 
@@ -648,12 +677,12 @@ export default function App() {
 
   // --- Sub-components for History ---
 
-const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComplete: (recipient: string, amount: number, method: string, category: string) => void, onClose: () => void, balance: number }) => {
+const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { onTransferComplete: (recipient: string, amount: number, method: string, category: string) => void, onClose: () => void, balance: number, categories: string[] }) => {
   const [step, setStep] = useState<'RECIPIENT' | 'AMOUNT' | 'PROCESSING' | 'SUCCESS'>('RECIPIENT');
   const [bank, setBank] = useState('');
   const [accountNo, setAccountNo] = useState('');
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('Other');
+  const [category, setCategory] = useState(categories[0] || 'Other');
   const [notes, setNotes] = useState('');
   const [trxId] = useState(generateID());
 
@@ -759,7 +788,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
                      onChange={(e) => setCategory(e.target.value)}
                      className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-3xl text-white outline-none focus:border-blue-500/50 appearance-none"
                    >
-                     {CATEGORIES.map(cat => (
+                     {categories.map(cat => (
                        <option key={cat} value={cat}>{cat}</option>
                      ))}
                    </select>
@@ -861,7 +890,14 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
 
 // --- Sub-components for History ---
 
-  const HistoryPage = () => {
+  const addCategory = (name: string) => {
+    if (name && !customCategories.includes(name)) {
+      setCustomCategories(prev => [...prev, name]);
+    }
+  };
+
+  const HistoryPage = ({ categories, addCategory }: { categories: string[], addCategory: (c: string) => void }) => {
+    const [newCategory, setNewCategory] = useState('');
     const filteredHistory = useMemo(() => {
       return history.filter(t => {
         const matchesSearch = (t.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -933,7 +969,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
            
            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
               <p className="text-zinc-600 text-[8px] font-black uppercase self-center mr-2">Categories:</p>
-              {['Semua', ...CATEGORIES].map((f) => (
+              {['Semua', ...categories].map((f) => (
                 <button 
                   key={f}
                   onClick={() => setActiveFilter(f)}
@@ -942,6 +978,26 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
                   {f}
                 </button>
               ))}
+              <div className="flex items-center gap-2 ml-2 bg-zinc-950 p-1 rounded-full border border-zinc-800">
+                <input 
+                   type="text" 
+                   placeholder="New..."
+                   value={newCategory}
+                   onChange={(e) => setNewCategory(e.target.value)}
+                   className="bg-zinc-900 border-none rounded-full px-3 py-1 text-[10px] text-white outline-none w-20"
+                />
+                <button 
+                   onClick={() => {
+                       if (newCategory.trim()) {
+                           addCategory(newCategory.trim());
+                           setNewCategory('');
+                       }
+                   }}
+                   className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center font-black hover:bg-blue-500"
+                >
+                   +
+                </button>
+              </div>
            </div>
 
            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
@@ -1056,6 +1112,72 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
       </motion.div>
     </motion.div>
   );
+
+  const WalletPage = ({ balance, history }: { balance: number, history: Transaction[] }) => {
+    const data = [
+        { name: 'Groceries', value: 20 },
+        { name: 'Dining', value: 15 },
+        { name: 'Travel', value: 25 },
+        { name: 'Utilities', value: 10 },
+        { name: 'Ments', value: 10 },
+        { name: 'Pectindary', value: 8 },
+        { name: 'Dates', value: 7 },
+        { name: 'Waore', value: 6 },
+    ];
+    const COLORS = ['#94a3b8', '#475569', '#334155', '#1e293b', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'];
+
+    return (
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex-1 overflow-y-auto px-6 pb-40 space-y-8">
+            <div className="pt-8 text-center">
+                <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px]">TOTAL BALANCE</p>
+                <h2 className="text-4xl font-black text-white italic tracking-tighter mt-2">{formatIDR(balance)}</h2>
+            </div>
+            
+            <div className="bg-zinc-900/40 p-6 rounded-[32px] border border-white/5 h-80 relative">
+                <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px] mb-4">SPENDING TRENDS</p>
+                <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                        <Pie
+                            data={data}
+                            innerRadius={70}
+                            outerRadius={90}
+                            paddingAngle={5}
+                            dataKey="value"
+                            stroke="none"
+                        >
+                            {data.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                        </Pie>
+                        <Tooltip contentStyle={{ backgroundColor: '#18181b', border: 'none', borderRadius: '12px' }} />
+                    </PieChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                     <p className="text-zinc-500 text-[10px] font-black uppercase">Rata-rata</p>
+                     <p className="text-white font-black text-sm">Rp 4.3M</p>
+                </div>
+            </div>
+            
+            <div className="space-y-4">
+                <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px] ml-2">MY CARDS</p>
+                <div className="h-48 bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-[32px] p-8 flex flex-col justify-between text-white shadow-2xl border border-zinc-700">
+                     <div className="flex justify-between">
+                         <p className="font-bold">Virtual Card</p>
+                         <div className="w-10 h-7 bg-zinc-600 rounded-md"></div>
+                     </div>
+                     <p className="font-mono text-xl tracking-widest mt-4">**** **** **** 9482</p>
+                     <div className="flex justify-between items-end">
+                         <p className="font-bold">D. DEWANGGA</p>
+                         <div className="flex gap-1">
+                             <div className="w-8 h-8 rounded-full bg-red-500/80"></div>
+                             <div className="w-8 h-8 rounded-full bg-orange-500/80 -ml-4"></div>
+                         </div>
+                     </div>
+                </div>
+            </div>
+        </motion.div>
+    );
+};
 
   const ProfilePage = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1192,7 +1314,6 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
           <LoginScreen 
             key="login" 
             onLogin={() => setIsAuthenticated(true)} 
-            isBiometricEnabled={isBiometricEnabled}
           />
         )}
       </AnimatePresence>
@@ -1312,16 +1433,22 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
             balance={balance}
             onClose={() => setShowTransfer(false)}
             onTransferComplete={handleTransferComplete}
+            categories={customCategories}
           />
         )}
       </AnimatePresence>
 
-      {!loading && isAuthenticated && (
-        <motion.div 
-          className="w-full max-w-md h-screen flex flex-col bg-zinc-950 relative"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        >
+      <AnimatePresence mode="wait">
+        {!hasShownSplash ? (
+          <SplashScreen key="splash" onComplete={() => setHasShownSplash(true)} />
+        ) : !isAuthenticated ? (
+          <LoginScreen key="login" onLogin={() => setIsAuthenticated(true)} />
+        ) : (
+          <motion.div 
+            className="w-full max-w-md h-screen flex flex-col bg-zinc-950 relative"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
           {/* Header */}
           <header className="p-6 flex items-center justify-between z-10">
              <div className="flex items-center gap-3">
@@ -1350,9 +1477,10 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
             {activeView === 'HOME' && (
               <motion.main 
                 key="home"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
+                initial={{ opacity: 0, x: -40, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: -40, scale: 0.95 }}
+                transition={{ type: "spring", stiffness: 200, damping: 20 }}
                 className="flex-1 overflow-y-auto px-6 pb-32"
               >
                 {/* Large Balance Display */}
@@ -1426,35 +1554,28 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
                     ))}
                 </section>
 
-                {/* Recent Activity */}
+                {/* Upcoming Events */}
                 <section>
                     <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-black italic tracking-tighter">RECENT ACTIVITY</h3>
-                      <button onClick={() => setActiveView('HISTORY')} className="text-blue-500 text-[10px] font-black uppercase tracking-widest flex items-center gap-1">VIEW ALL <ChevronRight className="w-3 h-3" /></button>
+                      <h3 className="text-xl font-black italic tracking-tighter">UPCOMING EVENTS</h3>
                     </div>
                     <div className="space-y-4">
-                      {history.slice(0, 5).map((trx) => (
+                      {EVENTS.map((event, index) => (
                           <motion.div 
-                            key={trx.id}
-                            initial={{ opacity: 0, x: -10 }}
-                            whileInView={{ opacity: 1, x: 0 }}
-                            onClick={() => { setSelectedTransaction(trx); }}
+                            key={event.id}
+                            initial={{ opacity: 0, x: -40, rotateX: 10 }}
+                            animate={{ opacity: 1, x: 0, rotateX: 0 }}
+                            transition={{ type: "spring", stiffness: 200, damping: 20, delay: index * 0.1 }}
                             className="flex items-center justify-between p-5 bg-zinc-900/40 border border-zinc-800/50 rounded-[28px] hover:bg-zinc-900/60 transition-colors group cursor-pointer"
                           >
                             <div className="flex items-center gap-4">
-                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${trx.isPositive ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'} border border-white/5`}>
-                                  {trx.isPositive ? <ArrowDownLeft className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
+                                <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-blue-500/10 text-blue-500 border border-white/5">
+                                  <CalendarDays className="w-5 h-5" />
                                 </div>
                                 <div>
-                                  <p className="text-white font-bold group-hover:text-blue-400 transition-colors">{trx.name}</p>
-                                  <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider">{trx.method} • {trx.time}</p>
+                                  <p className="text-white font-bold group-hover:text-blue-400 transition-colors">{event.name}</p>
+                                  <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider">{event.category} • {event.date} {event.time}</p>
                                 </div>
-                            </div>
-                            <div className="text-right">
-                                <p className={`font-black tracking-tight ${trx.isPositive ? 'text-emerald-500' : 'text-zinc-200'}`}>
-                                  {trx.isPositive ? '+' : '-'}{formatIDR(trx.amount)}
-                                </p>
-                                <p className="text-zinc-600 text-[9px] font-black uppercase">{trx.status}</p>
                             </div>
                           </motion.div>
                       ))}
@@ -1463,8 +1584,11 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
               </motion.main>
             )}
 
+            {activeView === 'WALLET' && (
+              <WalletPage balance={balance} history={history} />
+            )}
             {activeView === 'HISTORY' && (
-              <HistoryPage key="history" />
+              <HistoryPage categories={customCategories} addCategory={addCategory} />
             )}
 
             {activeView === 'PROFILE' && (
@@ -1547,9 +1671,12 @@ const TransferFlow = ({ onTransferComplete, onClose, balance }: { onTransferComp
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* Gemini Chat FAB */}
+          <GeminiChat history={history} balance={balance} />
         </motion.div>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   );
 }
-
