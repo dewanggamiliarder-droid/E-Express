@@ -1,17 +1,28 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signInWithPopup } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+
+// Fallback to config file if env vars are missing, or vice versa
+// But user explicitly requested VITE_ env vars
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyD-4FP2Ne_ak-sPsQmgpzG2U-PS805TAT8",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "gen-lang-client-0963620815.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0963620815",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "gen-lang-client-0963620815.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "180998174556",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:180998174556:web:cb971c35194526cb067399",
+  firestoreDatabaseId: "ai-studio-44ca32d2-5765-43de-8290-c1da92a570a8"
+};
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); 
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
-export { signInWithPopup };
+export { signInWithRedirect, getRedirectResult, signInWithPopup };
 
 // Connectivity check as per guidelines
 async function testConnection(retries = 3) {
-  console.log(`Checking Firestore connection... (Database ID: ${firebaseConfig.firestoreDatabaseId})`);
+  console.log(`Checking Firestore connection... (Project ID: ${firebaseConfig.projectId})`);
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
     console.log("Firestore connection successful.");

@@ -2,7 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Default deny for safety
     match /{document=**} {
       allow read, write: if false;
     }
@@ -15,38 +14,67 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
     // --- User Profile Rules ---
     match /users/{userId} {
-      // 1. Owner can fully manage their own profile
-      allow get, write: if isOwner(userId);
-      
-      // 2. Others can search for recipient profiles via ID or accountId
-      allow get: if isSignedIn();
-      allow list: if isSignedIn(); // Necessary for searching by accountId
+      function isValidUser(data) {
+        return data.uid == userId &&
+               data.email is string &&
+               data.balance is number &&
+               data.accountId is string &&
+               (!('name' in data) || data.name is string) &&
+               (!('phone' in data) || data.phone is string);
+      }
 
-      // 3. Update Balance (Transfer Logic)
-      // Allows a sender to increment the balance of a recipient
+      // Owner can read and write their own profile
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming());
+
+      // Transfers: Senders can update recipient balance
       allow update: if isSignedIn() && 
-                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance']) &&
-                    request.resource.data.balance > resource.data.balance;
+                    isValidId(userId) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['balance']) &&
+                    incoming().balance > existing().balance;
+
+      // For account lookup
+      allow get, list: if isSignedIn(); 
 
       // --- Transaction Sub-collection ---
       match /transactions/{transactionId} {
-        // 1. Only owner can read their transaction history
+        function isValidTransaction(data) {
+          return data.amount is number &&
+                 data.type is string &&
+                 data.status in ['BERHASIL', 'PENDING', 'GAGAL'] &&
+                 data.createdAt != null;
+        }
+
+        // Only owner can read history
         allow read: if isOwner(userId);
         
-        // 2. Owner can create their own records
-        allow create: if isOwner(userId);
+        // Owner can create records
+        allow create: if isOwner(userId) && isValidTransaction(incoming());
         
-        // 3. Sender can create a "credit" transaction record in recipient's history
+        // Senders can create "income" records for recipients
         allow create: if isSignedIn() && 
-                      request.resource.data.recipientUid == userId && 
-                      request.resource.data.isPositive == true &&
-                      request.resource.data.senderUid == request.auth.uid;
+                      incoming().recipientUid == userId && 
+                      incoming().isPositive == true &&
+                      incoming().senderUid == request.auth.uid &&
+                      isValidTransaction(incoming());
       }
     }
 
-    // Simple health check path
     match /test/connection {
       allow get: if true;
     }

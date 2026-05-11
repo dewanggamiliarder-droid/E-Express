@@ -1,5 +1,5 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Component } from 'react';
 import { 
   motion, 
   AnimatePresence 
@@ -34,8 +34,48 @@ import {
 } from 'lucide-react';
 import { GeminiChat } from './components/GeminiChat';
 
+import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
+import { QRCodeSVG } from 'qrcode.react';
+
+// --- Error Boundary ---
+class ErrorBoundary extends Component<any, any> {
+  constructor(props: any) {
+    super(props);
+    // @ts-ignore
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+  render() {
+    // @ts-ignore
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-center p-10 text-center">
+          <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mb-6">
+            <X className="text-red-500 w-10 h-10" />
+          </div>
+          <h1 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-2">SISTEM ERROR</h1>
+          <p className="text-zinc-500 text-sm max-w-xs mb-8">Maaf, terjadi kesalahan pada aplikasi. Tim kami sedang memperbaikinya.</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="px-8 py-3 bg-blue-600 rounded-2xl text-white font-bold"
+          >
+            Muat Ulang Aplikasi
+          </button>
+        </div>
+      );
+    }
+    // @ts-ignore
+    return this.props.children;
+  }
+}
+
 // Firebase Imports
-import { auth, db, OperationType, handleFirestoreError, googleProvider, signInWithPopup } from './lib/firebase';
+import { auth, db, OperationType, handleFirestoreError, googleProvider, signInWithRedirect, getRedirectResult, signInWithPopup } from './lib/firebase';
 import { 
   onAuthStateChanged, 
   signOut,
@@ -110,7 +150,7 @@ const formatIDR = (amount: number) => {
 };
 
 const BANK_LOGOS: { [key: string]: string } = {
-  'BRI': 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/BRI_Logo.svg/1024px-BRI_Logo.svg.png',
+  'BRI': 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/BANK_BRI_logo.svg/1280px-BANK_BRI_logo.svg.png',
   'BCA Digital': 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Bank_Central_Asia.svg/1024px-Bank_Central_Asia.svg.png',
   'Bank Mandiri': 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/Bank_Mandiri_logo_2016.svg/1024px-Bank_Mandiri_logo_2016.svg.png',
   'BNI': 'https://upload.wikimedia.org/wikipedia/id/thumb/5/55/BNI_logo.svg/1024px-BNI_logo.svg.png',
@@ -203,24 +243,49 @@ const SplashScreen = ({ onComplete }: { onComplete: () => void, key?: string }) 
 const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (merchant: string, amount: number) => void, onClose: () => void }) => {
   const [step, setStep] = useState<'SCAN' | 'MERCHANT' | 'PROCESSING' | 'SUCCESS'>('SCAN');
   const [amount, setAmount] = useState('');
-  const [merchant] = useState('Super Bank Express');
+  const [merchant, setMerchant] = useState('Unknown Merchant');
   const [trxId] = useState(generateID());
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
 
   useEffect(() => {
     if (step === 'SCAN') {
-      let stream: MediaStream | null = null;
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-        .then(s => {
-          stream = s;
-          if (videoRef.current) videoRef.current.srcObject = s;
-          // Simulate scan detection
-          setTimeout(() => {
-            setStep('MERCHANT');
-            if (stream) stream.getTracks().forEach(t => t.stop());
-          }, 3000);
-        });
-      return () => stream?.getTracks().forEach(t => t.stop());
+      const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+      const html5QrCode = new Html5Qrcode("qris-reader");
+      scannerRef.current = html5QrCode;
+
+      html5QrCode.start(
+        { facingMode: "environment" },
+        config,
+        (decodedText) => {
+          // Check if it's a valid Super Bank QR (we'll assume anything for now, but usually it would be a UID or specific format)
+          try {
+            const data = JSON.parse(decodedText);
+            if (data.type === 'SUPER_BANK_RECEIVE') {
+              setMerchant(data.name || 'User Super Bank');
+              // If it's a direct user transfer, we might need a different step, 
+              // but for now let's treat it like a merchant payment.
+            } else {
+              setMerchant(decodedText);
+            }
+          } catch {
+            setMerchant(decodedText);
+          }
+          
+          setStep('MERCHANT');
+          html5QrCode.stop().catch(err => console.error("Error stopping scanner", err));
+        },
+        () => {
+          // Error is quiet, just scanning
+        }
+      ).catch(err => {
+        console.error("Unable to start scanner", err);
+      });
+
+      return () => {
+        if (scannerRef.current && scannerRef.current.isScanning) {
+          scannerRef.current.stop().catch(err => console.error("Cleanup error", err));
+        }
+      };
     }
   }, [step]);
 
@@ -230,7 +295,7 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
     setTimeout(() => {
       setStep('SUCCESS');
       onTransactionComplete(merchant, parseFloat(amount));
-    }, 3500);
+    }, 2500);
   };
 
   return (
@@ -238,33 +303,38 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
       initial={{ opacity: 0 }} 
       animate={{ opacity: 1 }} 
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] bg-black"
+      className="fixed inset-0 z-[100] bg-black overflow-hidden"
     >
       <AnimatePresence mode="wait">
         {step === 'SCAN' && (
           <motion.div key="scan" className="h-full flex flex-col">
-             <div className="absolute top-12 inset-x-0 z-10 px-6 flex items-center justify-between">
+             <div className="absolute top-12 inset-x-0 z-20 px-6 flex items-center justify-between pointer-events-auto">
                 <button onClick={onClose} className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center text-white"><X /></button>
                 <h2 className="text-white font-bold tracking-tight">QRIS SCANNER</h2>
                 <button className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center text-white"><Flashlight /></button>
              </div>
+             
              <div className="flex-1 relative flex items-center justify-center">
-                <video ref={videoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-cover opacity-60" />
-                <div className="relative w-64 h-64 border-2 border-white/20 rounded-[40px] overflow-hidden">
-                   <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-blue-500 rounded-tl-3xl" />
-                   <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-blue-500 rounded-tr-3xl" />
-                   <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-blue-500 rounded-bl-3xl" />
-                   <div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-blue-500 rounded-br-3xl" />
-                   <motion.div 
-                     className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-blue-400 to-transparent shadow-[0_0_20px_rgba(37,99,235,1)]"
-                     animate={{ top: ['0%', '100%'] }} 
-                     transition={{ duration: 2, repeat: Infinity, ease: "linear" }} 
-                   />
+                <div id="qris-reader" className="w-full h-full" />
+                
+                {/* Custom Overlay */}
+                <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+                  <div className="w-64 h-64 relative">
+                    <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-blue-500 rounded-tl-3xl" />
+                    <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-blue-500 rounded-tr-3xl" />
+                    <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-blue-500 rounded-bl-3xl" />
+                    <div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-blue-500 rounded-br-3xl" />
+                    <motion.div 
+                      className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-blue-400 to-transparent shadow-[0_0_20px_rgba(37,99,235,1)]"
+                      animate={{ top: ['10%', '90%'] }} 
+                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }} 
+                    />
+                  </div>
+                  <div className="mt-12 text-center">
+                     <p className="text-blue-400 font-bold text-sm tracking-widest uppercase mb-2 animate-pulse">Scanning...</p>
+                     <p className="text-zinc-500 text-xs">Align QRIS code in the center</p>
+                  </div>
                 </div>
-             </div>
-             <div className="bg-zinc-950 p-10 text-center pb-20">
-                <p className="text-blue-400 font-bold text-sm tracking-widest uppercase mb-2 animate-pulse">Detecting QR Code...</p>
-                <p className="text-zinc-500 text-xs">Align the code within the frame</p>
              </div>
           </motion.div>
         )}
@@ -431,42 +501,22 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
   const handleGoogleLogin = async () => {
     setIsAuthenticating(true);
     try {
-        const userCred = await signInWithPopup(auth, googleProvider);
-        const user = userCred.user;
-        const uid = user.uid;
-        
-        console.log("Logged in successfully:", user.email);
-
-        // Check if user exists in Firestore
-        const userDoc = await getDoc(doc(db, 'users', uid));
-        
-        if (!userDoc.exists()) {
-            console.log("Setting up new user profile...");
-            // First time login - setup bank account
-            const newAccountId = 'SB-' + Math.floor(10000000 + Math.random() * 90000000);
-            await setDoc(doc(db, 'users', uid), {
-                uid,
-                email: user.email,
-                name: user.displayName || user.email?.split('@')[0] || 'User',
-                balance: 200000000000, // Starting balance is very high for demo
-                accountId: newAccountId,
-                avatar: user.photoURL || null,
-                createdAt: serverTimestamp()
-            });
+        // Try Popup first as it's better for AI Studio iframe
+        console.log("Attempting Google Login via Popup...");
+        try {
+            await signInWithPopup(auth, googleProvider);
+            console.log("Login success via Popup");
+        } catch (popupError: any) {
+            console.warn("Popup blocked or failed, trying Redirect...", popupError);
+            if (popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/popup-closed-by-user' || popupError.code === 'auth/cancelled-popup-request') {
+                await signInWithRedirect(auth, googleProvider);
+            } else {
+                throw popupError;
+            }
         }
-
-        onLogin();
     } catch (error: any) {
         console.error("Auth error:", error);
-        if (error.code === 'auth/popup-blocked') {
-            alert("Popup diblokir oleh browser. Silakan izinkan popup untuk situs ini agar bisa login.");
-        } else if (error.code === 'auth/popup-closed-by-user') {
-            // User closed the popup, no need for major alert but good to know
-            console.log("Login popup ditutup oleh pengguna.");
-        } else {
-            alert("Gagal melakukan login Google: " + (error.message || "Error tidak diketahui"));
-        }
-    } finally {
+        alert("Gagal melakukan login Google:\n" + (error.message || "Error tidak diketahui") + "\n\nPastikan domain ini sudah di-whitelist di Firebase Console.");
         setIsAuthenticating(false);
     }
   };
@@ -531,12 +581,78 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
   );
 };
 
+const ReceiveQRModal = ({ user, onClose }: { user: any, onClose: () => void }) => {
+  const qrData = JSON.stringify({
+    type: 'SUPER_BANK_RECEIVE',
+    uid: user.uid,
+    name: user.name,
+    accountId: user.accountId
+  });
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }} 
+      animate={{ opacity: 1 }} 
+      exit={{ opacity: 0 }} 
+      className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center p-8"
+    >
+      <div className="w-full max-w-xs flex flex-col items-center">
+         <div className="w-20 h-20 bg-white rounded-[2rem] flex items-center justify-center mb-8 shadow-2xl shadow-blue-500/20">
+            <img src={BANK_LOGOS['Super Bank Express']} className="w-12 h-12 object-contain" alt="Logo" />
+         </div>
+         
+         <div className="bg-white p-8 rounded-[40px] mb-8 shadow-[0_0_50px_rgba(37,99,235,0.2)]">
+            <QRCodeSVG 
+              value={qrData} 
+              size={200}
+              level="H"
+              includeMargin={false}
+              imageSettings={{
+                src: BANK_LOGOS['Super Bank Express'],
+                x: undefined,
+                y: undefined,
+                height: 40,
+                width: 40,
+                excavate: true,
+              }}
+            />
+         </div>
+         
+         <div className="text-center mb-10">
+            <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-1">{user.name}</h2>
+            <p className="text-blue-500 font-bold text-sm tracking-widest">{user.accountId}</p>
+         </div>
+         
+         <p className="text-zinc-500 text-[10px] uppercase font-black tracking-[0.2em] mb-8 text-center leading-relaxed">
+            Scan this QR code with another Super Bank app <br/> to receive instant funds
+         </p>
+         
+         <button 
+           onClick={onClose}
+           className="w-full py-5 bg-zinc-900 border border-zinc-800 rounded-3xl text-white font-bold"
+         >
+           Close
+         </button>
+      </div>
+    </motion.div>
+  );
+};
+
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <MainApp />
+    </ErrorBoundary>
+  );
+}
+
+function MainApp() {
   const [loading, setLoading] = useState(true);
   const [activeView, setActiveView] = useState<View>('HOME');
   const [notification, setNotification] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
+  const [showReceive, setShowReceive] = useState(false);
   
   // Modals
   const [showEditProfile, setShowEditProfile] = useState(false);
@@ -547,6 +663,7 @@ export default function App() {
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [hasShownSplash, setHasShownSplash] = useState(false);
+  const isFirstTransLoad = useRef(true);
 
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(() => {
     const saved = localStorage.getItem('expres_biometric');
@@ -585,42 +702,69 @@ export default function App() {
 
   // Firebase Auth Observer
   useEffect(() => {
+    const handleRedirect = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result?.user) {
+          console.log("Redirect result user:", result.user.email);
+          // Actual profile setup happens in the onAuthStateChanged observer for consistency
+        }
+      } catch (err) {
+        console.error("Redirect error:", err);
+      }
+    };
+    handleRedirect();
+
     const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
       setFirebaseUser(fUser);
       if (fUser) {
-        try {
-          const userDocRef = doc(db, 'users', fUser.uid);
-          const userSnap = await getDoc(userDocRef);
-          
-          if (!userSnap.exists()) {
+        // Automatically ensure user document exists
+        const checkProfile = async (retries = 3) => {
+          try {
+            const userDocRef = doc(db, 'users', fUser.uid);
+            const userSnap = await getDoc(userDocRef);
+            
+            if (!userSnap.exists()) {
+              console.log("Creating new profile for:", fUser.email);
               const newAccountId = 'SB-' + Math.floor(10000000 + Math.random() * 90000000);
               await setDoc(userDocRef, {
                   uid: fUser.uid,
                   email: fUser.email,
                   name: fUser.displayName || fUser.email?.split('@')[0] || 'User',
-                  balance: 200000000000,
+                  balance: 25000000, 
                   accountId: newAccountId,
                   avatar: fUser.photoURL || null,
                   createdAt: serverTimestamp()
               });
+            }
+            setIsAuthenticated(true);
+          } catch (err: any) {
+            // handle "the client is offline" error specifically by retrying
+            if (err.message.includes('offline') && retries > 0) {
+              console.warn(`Profile check failed (offline), retrying... (${retries} left)`);
+              setTimeout(() => checkProfile(retries - 1), 2000);
+            } else {
+              console.error("Ensure profile error:", err);
+              // Fallback to authenticated if doc might exist but offline
+              setIsAuthenticated(true);
+            }
           }
-          setIsAuthenticated(true);
-        } catch (e) {
-          console.error("Auth init error:", e);
-        } finally {
-          setLoading(false);
-        }
+        };
+        checkProfile();
       } else {
         setIsAuthenticated(false);
-        setLoading(false);
       }
+      setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
   // Data Synchronization Listener
   useEffect(() => {
-    if (!firebaseUser?.uid || !isAuthenticated) return;
+    if (!firebaseUser?.uid || !isAuthenticated) {
+      isFirstTransLoad.current = true;
+      return;
+    }
 
     const userDocRef = doc(db, 'users', firebaseUser.uid);
     const unsubUser = onSnapshot(userDocRef, (docSnap) => {
@@ -644,6 +788,24 @@ export default function App() {
     const transCollectionRef = collection(db, 'users', firebaseUser.uid, 'transactions');
     const q = query(transCollectionRef, orderBy('createdAt', 'desc'), limit(100));
     const unsubTrans = onSnapshot(q, (querySnap) => {
+      // Process doc changes for notifications
+      querySnap.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const d = change.doc.data();
+          // Trigger notification for new incoming SUCCESSFUL transactions, bypassing the initial load
+          if (!isFirstTransLoad.current && d.isPositive && d.status === 'BERHASIL') {
+            const amountStr = new Intl.NumberFormat('id-ID', {
+              style: 'currency',
+              currency: 'IDR',
+              minimumFractionDigits: 0,
+            }).format(d.amount);
+            setNotification(`Uang Masuk: ${amountStr} dari ${d.name || 'External Account'}`);
+          }
+        }
+      });
+      
+      isFirstTransLoad.current = false;
+
       const trans: Transaction[] = [];
       querySnap.forEach((doc) => {
         const d = doc.data();
@@ -953,6 +1115,46 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
   const [notes, setNotes] = useState('');
   const [trxId] = useState(generateID());
   const [isValidatingAcc, setIsValidatingAcc] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+
+  useEffect(() => {
+    if (isScanning) {
+      const html5QrCode = new Html5Qrcode("transfer-scanner");
+      scannerRef.current = html5QrCode;
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => {
+          try {
+            const data = JSON.parse(decodedText);
+            if (data.type === 'SUPER_BANK_RECEIVE') {
+              setBank('Super Bank Express');
+              setAccountNo(data.accountId);
+              setRecipientName(data.name);
+              setIsScanning(false);
+              html5QrCode.stop();
+            } else {
+              setAccountNo(decodedText);
+              setIsScanning(false);
+              html5QrCode.stop();
+            }
+          } catch {
+            setAccountNo(decodedText);
+            setIsScanning(false);
+            html5QrCode.stop();
+          }
+        },
+        () => {}
+      ).catch(err => console.error("Scanner error", err));
+
+      return () => {
+        if (scannerRef.current?.isScanning) {
+          scannerRef.current.stop();
+        }
+      };
+    }
+  }, [isScanning]);
 
   const handleNext = async () => {
     if (step === 'RECIPIENT' && bank && accountNo) {
@@ -1045,14 +1247,45 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
 
                 <div className="space-y-2">
                   <label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] ml-2">Account Number</label>
-                  <input 
-                    type="text" 
-                    placeholder="Contoh: SB-12345678"
-                    value={accountNo}
-                    onChange={(e) => setAccountNo(e.target.value.toUpperCase())}
-                    className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-3xl text-white outline-none focus:border-blue-500/50 placeholder:text-zinc-800 uppercase"
-                  />
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      placeholder="Contoh: SB-12345678"
+                      value={accountNo}
+                      onChange={(e) => setAccountNo(e.target.value.toUpperCase())}
+                      className="flex-1 bg-zinc-900 border border-zinc-800 p-5 rounded-3xl text-white outline-none focus:border-blue-500/50 placeholder:text-zinc-800 uppercase"
+                    />
+                    <button 
+                      onClick={() => setIsScanning(true)}
+                      className="w-16 bg-blue-600 rounded-3xl flex items-center justify-center text-white shadow-lg shadow-blue-500/20"
+                    >
+                      <Maximize2 className="w-6 h-6" />
+                    </button>
+                  </div>
                 </div>
+
+                <AnimatePresence>
+                  {isScanning && (
+                    <motion.div 
+                      key="scanner-overlay"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="fixed inset-0 z-[200] bg-black flex flex-col"
+                    >
+                       <div className="absolute top-12 inset-x-6 z-10 flex justify-between items-center">
+                          <button onClick={() => setIsScanning(false)} className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center text-white"><X /></button>
+                          <h3 className="text-white font-black italic">SCAN RECEIVER</h3>
+                          <div className="w-12" />
+                       </div>
+                       <div id="transfer-scanner" className="flex-1" />
+                       <div className="p-10 text-center bg-zinc-950">
+                          <p className="text-blue-500 font-bold mb-1">Scan QR Code Penerima</p>
+                          <p className="text-zinc-500 text-xs">Posisikan kode di dalam kotak pemindai</p>
+                       </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
              </div>
 
              <button 
@@ -1861,10 +2094,10 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                 {/* Action Grid */}
                 <section className="grid grid-cols-4 gap-4 mb-10">
                     {[
-                      { icon: Send, label: 'Kirim', color: 'bg-zinc-900', action: () => setShowTransfer(true) },
-                      { icon: CreditCard, label: 'Bayar', color: 'bg-zinc-900', action: () => {} },
-                      { icon: Plus, label: 'Top Up', color: 'bg-zinc-900', action: () => {} },
-                      { icon: ArrowUpRight, label: 'Transfer', color: 'bg-zinc-900', action: () => setShowTransfer(true) }
+                      { icon: ArrowUpRight, label: 'Kirim', color: 'bg-white/5', action: () => setShowTransfer(true) },
+                      { icon: ArrowDownLeft, label: 'Terima', color: 'bg-white/5', action: () => setShowReceive(true) },
+                      { icon: CreditCard, label: 'Card', color: 'bg-white/5', action: () => {} },
+                      { icon: MoreHorizontal, label: 'Lainnya', color: 'bg-white/5', action: () => {} }
                     ].map((act, i) => (
                       <motion.button 
                         key={i}
@@ -1873,8 +2106,8 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                         onClick={act.action}
                         className="flex flex-col items-center gap-3"
                       >
-                        <div className={`w-full aspect-square rounded-[24px] ${act.color} border border-zinc-800 flex items-center justify-center shadow-lg shadow-black/20 hover:shadow-blue-500/5 hover:border-blue-500/30 transition-all`}>
-                          <act.icon className="text-zinc-400 group-hover:text-blue-500 w-6 h-6" />
+                        <div className={`w-full aspect-square rounded-[24px] ${act.color} border border-white/5 flex items-center justify-center shadow-lg shadow-black/20 hover:shadow-blue-500/10 hover:border-blue-500/20 transition-all backdrop-blur-md`}>
+                          <act.icon className="text-zinc-300 w-6 h-6" />
                         </div>
                         <span className="text-zinc-500 text-[10px] uppercase font-black tracking-widest">{act.label}</span>
                       </motion.button>
@@ -1885,146 +2118,146 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                 <section>
                     <div className="flex items-center justify-between mb-6">
                       <h3 className="text-xl font-black italic tracking-tighter">UPCOMING EVENTS</h3>
-                    </div>
-                    <div className="space-y-4">
-                      {EVENTS.map((event, index) => (
-                          <motion.div 
-                            key={event.id}
-                            initial={{ opacity: 0, x: -40, rotateX: 10 }}
-                            animate={{ opacity: 1, x: 0, rotateX: 0 }}
-                            transition={{ type: "spring", stiffness: 200, damping: 20, delay: index * 0.1 }}
-                            className="flex items-center justify-between p-5 bg-zinc-900/40 border border-zinc-800/50 rounded-[28px] hover:bg-zinc-900/60 transition-colors group cursor-pointer"
-                          >
-                            <div className="flex items-center gap-4">
-                                <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-blue-500/10 text-blue-500 border border-white/5">
-                                  <CalendarDays className="w-5 h-5" />
-                                </div>
-                                <div>
-                                  <p className="text-white font-bold group-hover:text-blue-400 transition-colors">{event.name}</p>
-                                  <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider">{event.category} • {event.date} {event.time}</p>
-                                </div>
-                            </div>
-                          </motion.div>
-                      ))}
-                    </div>
-                </section>
-              </motion.main>
-            )}
-
-            {activeView === 'WALLET' && (
-              <WalletPage balance={balance} history={history} />
-            )}
-            {activeView === 'HISTORY' && (
-              <HistoryPage categories={customCategories} addCategory={addCategory} />
-            )}
-
-            {activeView === 'PROFILE' && (
-              <ProfilePage key="profile" />
-            )}
-          </AnimatePresence>
-
-          <AnimatePresence>
-            {selectedTransaction && (
-              <TransactionDetailModal 
-                trx={selectedTransaction} 
-                onClose={() => setSelectedTransaction(null)} 
-              />
-            )}
-          </AnimatePresence>
-
-          {/* Bottom Nav */}
-          <nav className="fixed bottom-0 inset-x-0 bg-black/80 backdrop-blur-2xl border-t border-zinc-900 px-6 py-6 pb-12 flex justify-center z-50">
-             <div className="max-w-md w-full flex items-center justify-between">
-                {[
-                  { icon: LayoutDashboard, label: 'Home', id: 'HOME' },
-                  { icon: Wallet, label: 'Wallet', id: 'WALLET' }
-                ].map((btn, i) => (
-                  <button 
-                    key={i} 
-                    onClick={() => setActiveView(btn.id as View)}
-                    className={`flex flex-col items-center gap-1 ${activeView === btn.id ? 'text-blue-500' : 'text-zinc-600'} hover:text-zinc-400 transition-colors`}
-                  >
-                    <btn.icon className="w-6 h-6" />
-                    <span className="text-[9px] font-black uppercase tracking-[0.2em]">{btn.label}</span>
-                  </button>
-                ))}
-
-                <div className="relative -top-8">
-                   <motion.button 
-                     onClick={() => setShowScanner(true)}
-                     whileHover={{ scale: 1.1 }}
-                     whileTap={{ scale: 0.9 }}
-                     className="w-16 h-16 bg-blue-600 rounded-[28px] flex items-center justify-center text-white shadow-[0_10px_40px_rgba(37,99,235,0.6)] ring-4 ring-zinc-950 group"
-                   >
-                     <Plane className="w-8 h-8 fill-current group-hover:rotate-[15deg] transition-transform" />
-                     <div className="absolute -inset-1 bg-blue-400/20 rounded-full blur-xl animate-pulse" />
-                   </motion.button>
                 </div>
+                <div className="space-y-4">
+                  {EVENTS.map((event, index) => (
+                      <motion.div 
+                        key={event.id}
+                        initial={{ opacity: 0, x: -40, rotateX: 10 }}
+                        animate={{ opacity: 1, x: 0, rotateX: 0 }}
+                        transition={{ type: "spring", stiffness: 200, damping: 20, delay: index * 0.1 }}
+                        className="flex items-center justify-between p-5 bg-white/5 border border-white/5 rounded-[28px] hover:bg-white/10 transition-colors group cursor-pointer"
+                      >
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-blue-500/10 text-blue-500 border border-white/5">
+                              <CalendarDays className="w-5 h-5" />
+                            </div>
+                            <div>
+                               <p className="text-white font-bold group-hover:text-blue-400 transition-colors">{event.name}</p>
+                               <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider">{event.category} • {event.date} {event.time}</p>
+                            </div>
+                        </div>
+                      </motion.div>
+                  ))}
+                </div>
+            </section>
+          </motion.main>
+        )}
 
-                {[
-                  { icon: History, label: 'History', id: 'HISTORY' },
-                  { icon: User, label: 'Profile', id: 'PROFILE' }
-                ].map((btn, i) => (
-                  <button 
-                    key={i} 
-                    onClick={() => setActiveView(btn.id as View)}
-                    className={`flex flex-col items-center gap-1 ${activeView === btn.id ? 'text-blue-500' : 'text-zinc-600'} hover:text-zinc-400 transition-colors`}
-                  >
-                    <btn.icon className="w-6 h-6" />
-                    <span className="text-[9px] font-black uppercase tracking-[0.2em]">{btn.label}</span>
-                  </button>
-                ))}
-             </div>
-          </nav>
+        {activeView === 'WALLET' && (
+          <WalletPage balance={balance} history={history} />
+        )}
+        {activeView === 'HISTORY' && (
+          <HistoryPage categories={customCategories} addCategory={addCategory} />
+        )}
 
-          {/* Logout Overlay */}
-          <AnimatePresence>
-            {isLoggedOut && (
-              <motion.div 
-                initial={{ opacity: 0 }} 
-                animate={{ opacity: 1 }} 
-                exit={{ opacity: 0 }} 
-                className="fixed inset-0 z-[300] bg-zinc-950 flex flex-col items-center justify-center"
+        {activeView === 'PROFILE' && (
+          <ProfilePage key="profile" />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedTransaction && (
+          <TransactionDetailModal 
+            trx={selectedTransaction} 
+            onClose={() => setSelectedTransaction(null)} 
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Bottom Nav */}
+      <nav className="fixed bottom-0 inset-x-0 bg-zinc-950/80 backdrop-blur-3xl border-t border-white/5 px-6 py-6 pb-12 flex justify-center z-50">
+         <div className="max-w-md w-full flex items-center justify-between">
+            {[
+              { icon: LayoutDashboard, label: 'Home', id: 'HOME' },
+              { icon: Wallet, label: 'Wallet', id: 'WALLET' }
+            ].map((btn, i) => (
+              <button 
+                key={i} 
+                onClick={() => setActiveView(btn.id as View)}
+                className={`flex flex-col items-center gap-1 ${activeView === btn.id ? 'text-blue-500' : 'text-zinc-600'} hover:text-blue-400 transition-colors`}
               >
-                  <motion.div 
-                    animate={{ scale: [1, 1.1, 1] }} 
-                    transition={{ repeat: Infinity, duration: 2 }}
-                    className="w-24 h-24 bg-zinc-900 rounded-[32px] flex items-center justify-center mb-6"
-                  >
-                     <ShieldCheck className="text-blue-500 w-12 h-12" />
-                  </motion.div>
-                  <h2 className="text-white font-bold text-xl mb-2">Sesi Diamankan</h2>
-                  <p className="text-zinc-500 text-sm">Menghapus data sesi Super Bank Express...</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                <btn.icon className="w-6 h-6" />
+                <span className="text-[9px] font-black uppercase tracking-[0.2em]">{btn.label}</span>
+              </button>
+            ))}
 
-          {/* Gemini Chat FAB */}
-          <GeminiChat history={history} balance={balance} />
-        </motion.div>
-        )}
-      </AnimatePresence>
+            <div className="relative -top-8">
+               <motion.button 
+                 onClick={() => setShowScanner(true)}
+                 whileHover={{ scale: 1.1 }}
+                 whileTap={{ scale: 0.9 }}
+                 className="w-16 h-16 bg-blue-600 rounded-[28px] flex items-center justify-center text-white shadow-[0_15px_40px_rgba(37,99,235,0.4)] ring-8 ring-zinc-950 group"
+               >
+                 <Maximize2 className="w-8 h-8 group-hover:rotate-[90deg] transition-transform" />
+                 <div className="absolute -inset-1 bg-blue-400/20 rounded-full blur-xl animate-pulse" />
+               </motion.button>
+            </div>
+
+            {[
+              { icon: History, label: 'History', id: 'HISTORY' },
+              { icon: User, label: 'Profile', id: 'PROFILE' }
+            ].map((btn, i) => (
+              <button 
+                key={i} 
+                onClick={() => setActiveView(btn.id as View)}
+                className={`flex flex-col items-center gap-1 ${activeView === btn.id ? 'text-blue-500' : 'text-zinc-600'} hover:text-blue-400 transition-colors`}
+              >
+                <btn.icon className="w-6 h-6" />
+                <span className="text-[9px] font-black uppercase tracking-[0.2em]">{btn.label}</span>
+              </button>
+            ))}
+         </div>
+      </nav>
 
       <AnimatePresence>
-        {notification && <Notification message={notification} onClose={() => setNotification(null)} />}
+        {isLoggedOut && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[300] bg-zinc-950 flex flex-col items-center justify-center"
+          >
+              <div className="w-24 h-24 bg-zinc-900 rounded-[32px] flex items-center justify-center mb-6">
+                 <ShieldCheck className="text-blue-500 w-12 h-12" />
+              </div>
+              <h2 className="text-white font-bold text-xl mb-2">Sesi Diamankan</h2>
+              <p className="text-zinc-500 text-sm">Menghapus data sesi Super Bank Express...</p>
+          </motion.div>
+        )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {showScanner && (
-          <QRISFlow 
-            onClose={() => setShowScanner(false)} 
-            onTransactionComplete={handleQRISPayment}
-          />
-        )}
-        {showTransfer && (
-          <TransferFlow 
-            balance={balance}
-            onClose={() => setShowTransfer(false)}
-            onTransferComplete={handleTransferComplete}
-            categories={customCategories}
-          />
-        )}
-      </AnimatePresence>
+      <GeminiChat history={history} balance={balance} />
+    </motion.div>
+    )}
+  </AnimatePresence>
+
+  <AnimatePresence>
+    {notification && <Notification message={notification} onClose={() => setNotification(null)} />}
+  </AnimatePresence>
+
+  <AnimatePresence>
+    {showScanner && (
+      <QRISFlow 
+        onClose={() => setShowScanner(false)} 
+        onTransactionComplete={handleQRISPayment}
+      />
+    )}
+    {showTransfer && (
+      <TransferFlow 
+        balance={balance}
+        onClose={() => setShowTransfer(false)}
+        onTransferComplete={handleTransferComplete}
+        categories={customCategories}
+      />
+    )}
+    {showReceive && (
+      <ReceiveQRModal 
+        user={{ ...user, uid: firebaseUser?.uid }} 
+        onClose={() => setShowReceive(false)} 
+      />
+    )}
+  </AnimatePresence>
 
       {/* Persistence Modals */}
       <AnimatePresence>
