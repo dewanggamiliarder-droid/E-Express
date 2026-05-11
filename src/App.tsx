@@ -76,7 +76,7 @@ class ErrorBoundary extends Component<any, any> {
 }
 
 // Firebase Imports
-import { auth, db, OperationType, handleFirestoreError, googleProvider, signInWithRedirect, getRedirectResult, signInWithPopup } from './lib/firebase';
+import { auth, db, OperationType, handleFirestoreError, googleProvider, signInWithRedirect, getRedirectResult, signInWithPopup, setPersistence, browserLocalPersistence } from './lib/firebase';
 import { 
   onAuthStateChanged, 
   signOut,
@@ -627,25 +627,44 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
   const handleGoogleLogin = async () => {
+    // Determine if we are in an environment that blocks redirects (like AI Studio iframe)
+    const isInIframe = window.self !== window.top;
+    
+    if (isInIframe) {
+      alert("Fitur login Google tidak didukung di dalam frame pratinjau ini.\n\nSilakan klik tombol 'Open in new tab' di pojok kanan atas aplikasi Anda untuk masuk.");
+      return;
+    }
+
+    if (isAuthenticating) return;
+
     setIsAuthenticating(true);
     try {
-        // Try Popup first as it's better for AI Studio iframe
-        console.log("Attempting Google Login via Popup...");
+        console.log("Initiating Google Login Redirect...");
+        
+        // Ensure standard persistence first
         try {
-            await signInWithPopup(auth, googleProvider);
-            console.log("Login success via Popup");
-        } catch (popupError: any) {
-            console.warn("Popup blocked or failed, trying Redirect...", popupError);
-            if (popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/popup-closed-by-user' || popupError.code === 'auth/cancelled-popup-request') {
-                await signInWithRedirect(auth, googleProvider);
-            } else {
-                throw popupError;
-            }
+          await setPersistence(auth, browserLocalPersistence);
+        } catch (pErr) {
+          console.warn("Persistence set failed, continuing anyway", pErr);
         }
+
+        await signInWithRedirect(auth, googleProvider);
+        // After redirecting, the browser leaves the page
     } catch (error: any) {
-        console.error("Auth error:", error);
-        alert("Gagal melakukan login Google:\n" + (error.message || "Error tidak diketahui") + "\n\nPastikan domain ini sudah di-whitelist di Firebase Console.");
+        console.error("Auth Exception:", error);
         setIsAuthenticating(false);
+        
+        let errorMsg = error.message || "Terjadi kesalahan saat memulai login.";
+        
+        if (error.code === 'auth/unauthorized-domain' || error.message?.includes('unauthorized')) {
+          errorMsg = `DOMAIN TIDAK TERDAFTAR!\n\n` +
+                     `Host '${window.location.hostname}' belum terdaftar di Firebase Authorized Domains.\n\n` +
+                     `Harap tambahkan domain ini di Firebase Console Anda.`;
+        } else if (error.code === 'auth/network-request-failed') {
+          errorMsg = "Koneksi terputus. Harap cek internet Anda.";
+        }
+        
+        alert(errorMsg);
     }
   };
 
@@ -884,15 +903,61 @@ function MainApp({ isOffline }: { isOffline: boolean }) {
 
   // Firebase Auth Observer
   useEffect(() => {
+    // Validate Env Vars on Startup
+    const keys = [
+      'VITE_FIREBASE_API_KEY',
+      'VITE_FIREBASE_AUTH_DOMAIN',
+      'VITE_FIREBASE_PROJECT_ID'
+    ];
+    const missing = keys.filter(k => !import.meta.env[k]);
+    if (missing.length > 0) {
+      console.error("Missing critical Firebase environment variables:", missing);
+      setNotification(`SYSTEM: Konfigurasi Firebase tidak lengkap (${missing.join(', ')})`);
+    }
+
     const handleRedirect = async () => {
+      // Don't show heavy global loader immediately for every reload
+      // only if we detect a likely redirect flow
+      const isLikelyRedirect = window.location.search.includes('code=') || 
+                               window.location.search.includes('state=') || 
+                               window.localStorage.getItem('firebase:previous_auth_op');
+      
+      if (isLikelyRedirect) {
+        setLoading(true);
+      }
+
+      // Safety timer: stop loading if stuck
+      const loadingTimer = setTimeout(() => {
+        setLoading(false);
+      }, 7000);
+
       try {
+        console.log("Checking for Google redirect results...");
         const result = await getRedirectResult(auth);
+        
         if (result?.user) {
-          console.log("Redirect result user:", result.user.email);
-          // Actual profile setup happens in the onAuthStateChanged observer for consistency
+          console.log("Login successful via Redirect:", result.user.email);
+        } else {
+          // If no result and no user, we can safely stop loading
+          if (!auth.currentUser) {
+            setLoading(false);
+          }
         }
-      } catch (err) {
-        console.error("Redirect error:", err);
+      } catch (err: any) {
+        console.error("Redirect Flow Error Detail:", err);
+        setLoading(false);
+        
+        if (err.code === 'auth/web-storage-unsupported') {
+           alert("Storage browser tidak dapat diakses. Harap gunakan Chrome versi terbaru dan nonaktifkan 'Block third-party cookies'.");
+        } else if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized')) {
+           alert("DOMAIN BELUM TERDAFTAR:\nHarap tambahkan '" + window.location.hostname + "' ke 'Authorized Domains' di Firebase Console.");
+        } else if (err.message?.includes('initial state is missing')) {
+           console.warn("Status session tidak ditemukan. Menunggu Auth Observer...");
+        } else {
+           setNotification(`Gagal Login: ${err.message}`);
+        }
+      } finally {
+        clearTimeout(loadingTimer);
       }
     };
     handleRedirect();
@@ -900,57 +965,80 @@ function MainApp({ isOffline }: { isOffline: boolean }) {
     const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
       setFirebaseUser(fUser);
       if (fUser) {
-        // Load from local storage immediately if offline
+        console.log("Auth State Changed: User Logged In", fUser.email);
+        
+        // Cache management
         const cachedProfile = localStorage.getItem(`super_bank_profile_${fUser.uid}`);
         if (cachedProfile) {
-          const profile = JSON.parse(cachedProfile);
-          setUser(profile.user);
-          setBalance(profile.balance);
-          
-          const cachedHistory = localStorage.getItem(`super_bank_history_${fUser.uid}`);
-          if (cachedHistory) {
-            setHistory(JSON.parse(cachedHistory));
+          try {
+            const profile = JSON.parse(cachedProfile);
+            setUser(profile.user);
+            setBalance(profile.balance);
+          } catch (e) {
+            console.error("Cache parse error", e);
           }
         }
 
-        // Automatically ensure user document exists
-        const checkProfile = async (retries = 3) => {
+        // Ensure Profile exists in Firestore
+        const ensureProfile = async (retries = 3) => {
           try {
             const userDocRef = doc(db, 'users', fUser.uid);
             const userSnap = await getDoc(userDocRef);
             
             if (!userSnap.exists()) {
-              console.log("Creating new profile for:", fUser.email);
+              console.log("Initializing dynamic profile for first-time session...");
               const newAccountId = 'SB-' + Math.floor(10000000 + Math.random() * 90000000);
+              
               await setDoc(userDocRef, {
                   uid: fUser.uid,
                   email: fUser.email,
-                  name: fUser.displayName || fUser.email?.split('@')[0] || 'User',
+                  name: fUser.displayName || fUser.email?.split('@')[0] || 'Member',
+                  displayName: fUser.displayName || 'Member',
+                  photoURL: fUser.photoURL || null,
+                  avatar: fUser.photoURL || null,
                   balance: 25000000, 
                   accountId: newAccountId,
-                  avatar: fUser.photoURL || null,
-                  createdAt: serverTimestamp()
+                  createdAt: serverTimestamp(),
+                  lastLogin: serverTimestamp()
               });
+              
+              console.log("New profile created successfully.");
+            } else {
+              // Update last login
+              await updateDoc(userDocRef, { lastLogin: serverTimestamp() });
+              // Sync state from firestore
+              const data = userSnap.data();
+              if (data) {
+                setUser({
+                  name: data.name || 'Member',
+                  email: data.email || '',
+                  accountId: data.accountId || '',
+                  avatar: data.avatar || null
+                });
+                setBalance(data.balance || 0);
+              }
             }
             setIsAuthenticated(true);
+            setLoading(false);
           } catch (err: any) {
-            // handle "the client is offline" error specifically by retrying
+            console.error("Ensuring profile failed:", err);
             if (err.message.includes('offline') && retries > 0) {
-              console.warn(`Profile check failed (offline), retrying... (${retries} left)`);
-              setTimeout(() => checkProfile(retries - 1), 2000);
+              setTimeout(() => ensureProfile(retries - 1), 2000);
             } else {
-              console.error("Ensure profile error:", err);
-              // Fallback to authenticated if doc might exist but offline
-              setIsAuthenticated(true);
+              setNotification("Sinkronisasi profil gagal. Menggunakan data lokal.");
+              setIsAuthenticated(true); // Allow limited session
+              setLoading(false);
             }
           }
         };
-        checkProfile();
+        ensureProfile();
       } else {
+        console.log("Auth State Changed: User Logged Out");
         setIsAuthenticated(false);
+        setLoading(false);
       }
-      setLoading(false);
     });
+
     return () => unsubscribe();
   }, []);
 

@@ -7,12 +7,15 @@
       "properties": {
         "uid": { "type": "string" },
         "name": { "type": "string" },
+        "displayName": { "type": "string" },
         "email": { "type": "string" },
         "balance": { "type": "number" },
         "accountId": { "type": "string" },
         "phone": { "type": "string" },
         "avatar": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastLogin": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "balance", "accountId"]
     },

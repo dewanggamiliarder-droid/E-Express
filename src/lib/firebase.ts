@@ -1,24 +1,54 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signInWithPopup } from 'firebase/auth';
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithRedirect, 
+  getRedirectResult, 
+  signInWithPopup,
+  setPersistence,
+  browserLocalPersistence
+} from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer, enableIndexedDbPersistence } from 'firebase/firestore';
 
-// Fallback to config file if env vars are missing, or vice versa
-// But user explicitly requested VITE_ env vars
+// Validate required environment variables
+const requiredEnvVars = [
+  'VITE_FIREBASE_API_KEY',
+  'VITE_FIREBASE_AUTH_DOMAIN',
+  'VITE_FIREBASE_PROJECT_ID'
+];
+
+requiredEnvVars.forEach(key => {
+  if (!import.meta.env[key]) {
+    console.warn(`Missing environment variable: ${key}`);
+  }
+});
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyD-4FP2Ne_ak-sPsQmgpzG2U-PS805TAT8",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "gen-lang-client-0963620815.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0963620815",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "gen-lang-client-0963620815.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "180998174556",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:180998174556:web:cb971c35194526cb067399",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
   firestoreDatabaseId: "ai-studio-44ca32d2-5765-43de-8290-c1da92a570a8"
 };
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); 
 export const auth = getAuth(app);
+
+// Use local persistence to avoid sessionStorage issues on Android redirection
+setPersistence(auth, browserLocalPersistence).catch((error) => {
+  console.error("Auth persistence error:", error);
+});
+
 export const googleProvider = new GoogleAuthProvider();
-export { signInWithRedirect, getRedirectResult, signInWithPopup };
+// Force select account during login
+googleProvider.setCustomParameters({
+  prompt: 'select_account'
+});
+
+export { signInWithRedirect, getRedirectResult, signInWithPopup, browserLocalPersistence, setPersistence };
 
 // Enable persistence
 enableIndexedDbPersistence(db).catch((err) => {

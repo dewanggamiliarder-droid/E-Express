@@ -34,7 +34,12 @@ service cloud.firestore {
                data.balance is number &&
                data.accountId is string &&
                (!('name' in data) || data.name is string) &&
-               (!('phone' in data) || data.phone is string);
+               (!('displayName' in data) || data.displayName is string) &&
+               (!('photoURL' in data) || data.photoURL is string || data.photoURL == null) &&
+               (!('avatar' in data) || data.avatar is string || data.avatar == null) &&
+               (!('phone' in data) || data.phone is string) &&
+               (data.createdAt != null) &&
+               (!('lastLogin' in data) || data.lastLogin != null);
       }
 
       // Owner can read and write their own profile
