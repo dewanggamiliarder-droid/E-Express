@@ -20,6 +20,7 @@ import {
   Zap,
   MoreHorizontal,
   Wallet,
+  WifiOff,
   X,
   Maximize2,
   Flashlight,
@@ -240,12 +241,68 @@ const SplashScreen = ({ onComplete }: { onComplete: () => void, key?: string }) 
   );
 };
 
-const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (merchant: string, amount: number) => void, onClose: () => void }) => {
+const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (merchant: string, amount: number, recipientUid?: string) => void, onClose: () => void }) => {
   const [step, setStep] = useState<'SCAN' | 'MERCHANT' | 'PROCESSING' | 'SUCCESS'>('SCAN');
   const [amount, setAmount] = useState('');
   const [merchant, setMerchant] = useState('Unknown Merchant');
+  const [recipientUid, setRecipientUid] = useState<string | undefined>(undefined);
+  const [isTorchOn, setIsTorchOn] = useState(false);
+  const [isScanningFile, setIsScanningFile] = useState(false);
   const [trxId] = useState(generateID());
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const toggleTorch = async () => {
+    if (scannerRef.current && scannerRef.current.isScanning) {
+      try {
+        const state = !isTorchOn;
+        await scannerRef.current.applyVideoConstraints({
+          // @ts-ignore
+          advanced: [{ torch: state }]
+        });
+        setIsTorchOn(state);
+      } catch (err) {
+        console.warn("Torch not supported on this device", err);
+      }
+    }
+  };
+
+  const handleFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setIsScanningFile(true);
+    const html5QrCode = new Html5Qrcode("qris-reader-temp");
+    try {
+      const decodedText = await html5QrCode.scanFile(file, true);
+      handleScanSuccess(decodedText);
+    } catch (err) {
+      console.error("Error scanning file", err);
+      alert("Gagal membaca kode QR dari gambar.");
+    } finally {
+      setIsScanningFile(false);
+      html5QrCode.clear();
+    }
+  };
+
+  const handleScanSuccess = (decodedText: string) => {
+    try {
+      const data = JSON.parse(decodedText);
+      if (data.type === 'SUPER_BANK_RECEIVE') {
+        setMerchant(data.name || 'User Super Bank');
+        setRecipientUid(data.uid);
+      } else {
+        setMerchant(decodedText);
+      }
+    } catch {
+      setMerchant(decodedText);
+    }
+    
+    setStep('MERCHANT');
+    if (scannerRef.current && scannerRef.current.isScanning) {
+      scannerRef.current.stop().catch(err => console.error("Error stopping scanner", err));
+    }
+  };
 
   useEffect(() => {
     if (step === 'SCAN') {
@@ -256,27 +313,8 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
       html5QrCode.start(
         { facingMode: "environment" },
         config,
-        (decodedText) => {
-          // Check if it's a valid Super Bank QR (we'll assume anything for now, but usually it would be a UID or specific format)
-          try {
-            const data = JSON.parse(decodedText);
-            if (data.type === 'SUPER_BANK_RECEIVE') {
-              setMerchant(data.name || 'User Super Bank');
-              // If it's a direct user transfer, we might need a different step, 
-              // but for now let's treat it like a merchant payment.
-            } else {
-              setMerchant(decodedText);
-            }
-          } catch {
-            setMerchant(decodedText);
-          }
-          
-          setStep('MERCHANT');
-          html5QrCode.stop().catch(err => console.error("Error stopping scanner", err));
-        },
-        () => {
-          // Error is quiet, just scanning
-        }
+        handleScanSuccess,
+        () => {}
       ).catch(err => {
         console.error("Unable to start scanner", err);
       });
@@ -294,7 +332,7 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
     setStep('PROCESSING');
     setTimeout(() => {
       setStep('SUCCESS');
-      onTransactionComplete(merchant, parseFloat(amount));
+      onTransactionComplete(merchant, parseFloat(amount), recipientUid);
     }, 2500);
   };
 
@@ -308,132 +346,222 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
       <AnimatePresence mode="wait">
         {step === 'SCAN' && (
           <motion.div key="scan" className="h-full flex flex-col">
+             {/* Header */}
              <div className="absolute top-12 inset-x-0 z-20 px-6 flex items-center justify-between pointer-events-auto">
-                <button onClick={onClose} className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center text-white"><X /></button>
-                <h2 className="text-white font-bold tracking-tight">QRIS SCANNER</h2>
-                <button className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center text-white"><Flashlight /></button>
+                <button onClick={onClose} className="w-12 h-12 bg-zinc-900/80 backdrop-blur-md rounded-2xl flex items-center justify-center text-white border border-white/10"><X /></button>
+                <div className="bg-zinc-900/80 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/10">
+                   <h2 className="text-white font-bold tracking-tight text-xs uppercase tracking-widest">QRIS AI SCANNER</h2>
+                </div>
+                <button 
+                  onClick={toggleTorch}
+                  className={`w-12 h-12 backdrop-blur-md rounded-2xl flex items-center justify-center border border-white/10 transition-all ${isTorchOn ? 'bg-blue-500 text-white' : 'bg-zinc-900/80 text-white'}`}
+                >
+                  <Flashlight className={isTorchOn ? "fill-white" : ""} />
+                </button>
              </div>
              
-             <div className="flex-1 relative flex items-center justify-center">
-                <div id="qris-reader" className="w-full h-full" />
+              {/* Camera Feed */}
+             <div className="flex-1 relative flex items-center justify-center bg-black overflow-hidden">
+                <div id="qris-reader" className="w-full h-full [&>video]:object-cover [&>video]:w-full [&>video]:h-full" />
+                <div id="qris-reader-temp" className="hidden" />
                 
-                {/* Custom Overlay */}
-                <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-                  <div className="w-64 h-64 relative">
-                    <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-blue-500 rounded-tl-3xl" />
-                    <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-blue-500 rounded-tr-3xl" />
-                    <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-blue-500 rounded-bl-3xl" />
-                    <div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-blue-500 rounded-br-3xl" />
+                {/* Advanced Scanner Overlay */}
+                <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center bg-black/40">
+                  {/* The actual clear scanning area */}
+                  <div className="relative w-72 h-72">
+                    {/* Clearing the background for the scan area */}
+                    <div className="absolute inset-0 bg-transparent shadow-[0_0_0_1000px_rgba(0,0,0,0.6)] rounded-3xl" />
+                    
+                    {/* Corners */}
+                    <div className="absolute top-0 left-0 w-16 h-16 border-t-[6px] border-l-[6px] border-blue-500 rounded-tl-3xl z-20" />
+                    <div className="absolute top-0 right-0 w-16 h-16 border-t-[6px] border-r-[6px] border-blue-500 rounded-tr-3xl z-20" />
+                    <div className="absolute bottom-0 left-0 w-16 h-16 border-b-[6px] border-l-[6px] border-blue-500 rounded-bl-3xl z-20" />
+                    <div className="absolute bottom-0 right-0 w-16 h-16 border-b-[6px] border-r-[6px] border-blue-500 rounded-br-3xl z-20" />
+                    
+                    {/* Grid Effect */}
+                    <div className="absolute inset-0 bg-blue-500/5 backdrop-blur-[1px] rounded-3xl overflow-hidden border border-white/10">
+                       <div className="absolute inset-0 bg-[linear-gradient(rgba(37,99,235,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(37,99,235,0.1)_1px,transparent_1px)] bg-[size:24px_24px]" />
+                    </div>
+
+                    {/* Scanning Laser */}
                     <motion.div 
-                      className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-blue-400 to-transparent shadow-[0_0_20px_rgba(37,99,235,1)]"
-                      animate={{ top: ['10%', '90%'] }} 
-                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }} 
+                      className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-blue-400 to-transparent shadow-[0_0_20px_rgba(37,99,235,1)] z-30"
+                      animate={{ top: ['5%', '95%'] }} 
+                      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} 
                     />
                   </div>
-                  <div className="mt-12 text-center">
-                     <p className="text-blue-400 font-bold text-sm tracking-widest uppercase mb-2 animate-pulse">Scanning...</p>
-                     <p className="text-zinc-500 text-xs">Align QRIS code in the center</p>
+
+                  <div className="mt-16 text-center max-w-[240px] relative z-20">
+                     {isScanningFile ? (
+                        <div className="flex flex-col items-center">
+                          <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-4" />
+                          <p className="text-white font-black text-[10px] tracking-widest uppercase">Processing Image...</p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-center gap-2 mb-3">
+                             <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping" />
+                             <p className="text-blue-400 font-black text-[10px] tracking-[0.2em] uppercase">Neural Link Scanning</p>
+                          </div>
+                          <p className="text-zinc-400 text-[10px] leading-relaxed uppercase font-bold tracking-wider">Arahkan kamera ke kode QRIS untuk memproses pembayaran instan</p>
+                        </>
+                      )}
                   </div>
+                </div>
+
+                {/* Bottom Bar Controls */}
+                <div className="absolute bottom-12 inset-x-0 px-10 flex items-center justify-center pointer-events-auto">
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      className="hidden" 
+                      accept="image/*" 
+                      onChange={handleFileScan}
+                    />
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-5 bg-white/5 backdrop-blur-xl border border-white/10 rounded-full text-white/50 hover:text-white transition-colors"
+                    >
+                       <Smartphone className="w-6 h-6" />
+                    </button>
+                    <div className="mx-6 w-px h-10 bg-white/10" />
+                    <button className="p-5 bg-white/5 backdrop-blur-xl border border-white/10 rounded-full text-white/50 hover:text-white transition-colors">
+                       <Maximize2 className="w-6 h-6" />
+                    </button>
                 </div>
              </div>
           </motion.div>
         )}
 
         {step === 'MERCHANT' && (
-          <motion.div key="merchant" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="h-full flex flex-col p-6 pt-20 bg-zinc-950">
-             <div className="flex flex-col items-center mb-10">
-                <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-700 rounded-3xl flex items-center justify-center mb-4 shadow-[0_10px_30px_rgba(37,99,235,0.3)]">
-                   <ShieldCheck className="text-white w-10 h-10" />
+          <motion.div key="merchant" initial={{ scale: 1.1, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="h-full flex flex-col p-6 bg-zinc-950 pt-20">
+             <div className="flex flex-col items-center mb-12">
+                <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-blue-700 rounded-[2.5rem] flex items-center justify-center mb-6 shadow-[0_20px_50px_rgba(37,99,235,0.3)] border border-blue-400/20 relative overflow-hidden group">
+                   <div className="absolute inset-0 bg-white/20 animate-pulse group-hover:scale-150 transition-transform duration-1000" />
+                   <ShieldCheck className="text-white w-12 h-12 relative z-10" />
                 </div>
-                <h2 className="text-2xl font-bold text-white mb-1">{merchant}</h2>
-                <p className="text-zinc-500 text-sm font-medium">QRIS Berhasil Dibaca</p>
-             </div>
-
-             <div className="bg-zinc-900/50 border border-zinc-800 p-8 rounded-[40px] mb-10">
-                <label className="text-zinc-500 text-xs font-bold uppercase tracking-widest block mb-4">Input Nominal (IDR)</label>
-                <div className="flex items-center gap-2">
-                   <span className="text-2xl font-bold text-blue-500">Rp</span>
-                   <input 
-                     type="number" 
-                     value={amount} 
-                     onChange={(e) => setAmount(e.target.value)}
-                     className="bg-transparent border-none outline-none text-4xl font-bold text-white w-full placeholder:text-zinc-800"
-                     placeholder="0"
-                     autoFocus
-                   />
+                <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase mb-2">{merchant}</h2>
+                <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-500/10 rounded-full border border-blue-500/20">
+                   <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping" />
+                   <p className="text-blue-400 text-[10px] font-black tracking-widest uppercase">Verified Super Merchant</p>
                 </div>
              </div>
 
-             <button 
-               onClick={handlePay}
-               disabled={!amount}
-               className="w-full py-5 bg-blue-600 rounded-3xl text-white font-bold text-lg shadow-[0_15px_40px_rgba(37,99,235,0.3)] hover:bg-blue-500 transition-all disabled:opacity-30"
-             >
-               Bayar Sekarang
-             </button>
-             <button onClick={onClose} className="w-full py-5 text-zinc-500 font-bold mt-2">Batalkan</button>
+             <div className="bg-zinc-900 border border-zinc-800 p-10 rounded-[3rem] mb-12 shadow-2xl relative group overflow-hidden">
+                <div className="absolute inset-0 bg-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                <label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] block mb-6 text-center">Input Jumlah Pembayaran (IDR)</label>
+                <div className="flex flex-col items-center gap-4">
+                   <div className="flex items-center justify-center gap-3">
+                      <span className="text-3xl font-black text-blue-500 italic uppercase italic tracking-tighter">Rp</span>
+                      <input 
+                        type="number" 
+                        value={amount} 
+                        onChange={(e) => setAmount(e.target.value)}
+                        className="bg-transparent border-none outline-none text-6xl font-black text-white w-full placeholder:text-zinc-800 text-center tracking-tighter"
+                        placeholder="0"
+                        autoFocus
+                      />
+                   </div>
+                   {amount && (
+                      <p className="text-zinc-500 font-mono text-xs">
+                        {formatIDR(parseFloat(amount))}
+                      </p>
+                   )}
+                </div>
+             </div>
+
+             <div className="mt-auto space-y-4">
+               <button 
+                 onClick={handlePay}
+                 disabled={!amount || parseFloat(amount) <= 0}
+                 className="w-full py-6 bg-blue-600 rounded-[2rem] text-white font-black text-xl italic uppercase tracking-tighter shadow-[0_20px_60px_rgba(37,99,235,0.4)] transition-all active:scale-95 disabled:opacity-20 disabled:grayscale"
+               >
+                 Konfirmasi & Bayar
+               </button>
+               <button onClick={onClose} className="w-full py-4 text-zinc-600 font-black text-[10px] uppercase tracking-[0.3em] hover:text-zinc-400 transition-colors">Batalkan Pembayaran</button>
+             </div>
           </motion.div>
         )}
 
         {step === 'PROCESSING' && (
           <motion.div key="processing" className="h-full flex flex-col items-center justify-center bg-zinc-950 p-10">
-             <div className="relative mb-10">
+             <div className="relative mb-12">
                 <motion.div 
-                  className="w-32 h-32 border-4 border-blue-500/20 border-t-blue-500 rounded-full"
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                  className="w-40 h-40 border-2 border-dashed border-blue-500/20 rounded-full"
+                  animate={{ rotate: -360 }}
+                  transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
                 />
-                <Loader2 className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500 w-12 h-12 animate-pulse" />
+                <motion.div 
+                   className="absolute inset-0 border-b-2 border-blue-500 rounded-full"
+                   animate={{ rotate: 360 }}
+                   transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center">
+                   <Fingerprint className="text-blue-500 w-16 h-16 animate-pulse" />
+                </div>
              </div>
-             <h2 className="text-2xl font-bold text-white mb-2">AI Payment Processing</h2>
-             <p className="text-zinc-500 text-center text-sm leading-relaxed">Securing your transaction with neural network encryption...</p>
+             <div className="text-center">
+                <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase mb-3">AI Processing</h2>
+                <p className="text-zinc-500 text-xs uppercase font-bold tracking-widest leading-relaxed">
+                  Securing neural transaction through <br/> Super Bank Quantum Gateway...
+                </p>
+             </div>
           </motion.div>
         )}
 
         {step === 'SUCCESS' && (
-          <motion.div key="success" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="h-full bg-zinc-950 flex flex-col p-6 overflow-y-auto pb-10">
-             <div className="flex flex-col items-center pt-10 mb-8">
-                <div className="w-20 h-20 bg-emerald-500/20 border border-emerald-500/30 rounded-full flex items-center justify-center mb-4">
-                  <CheckCircle2 className="text-emerald-500 w-10 h-10" />
+          <motion.div key="success" initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="h-full bg-zinc-950 flex flex-col p-6 overflow-y-auto pb-10">
+             <div className="flex flex-col items-center pt-14 mb-10">
+                <div className="relative mb-6">
+                   <motion.div 
+                     initial={{ scale: 0 }}
+                     animate={{ scale: 1 }}
+                     className="w-24 h-24 bg-emerald-500 rounded-[2rem] flex items-center justify-center shadow-[0_20px_50px_rgba(16,185,129,0.3)]"
+                   >
+                     <CheckCircle2 className="text-white w-12 h-12" />
+                   </motion.div>
+                   <motion.div 
+                     className="absolute -inset-4 bg-emerald-500/20 blur-2xl rounded-full -z-10"
+                     animate={{ opacity: [0.5, 1, 0.5] }}
+                     transition={{ duration: 2, repeat: Infinity }}
+                   />
                 </div>
-                <h2 className="text-3xl font-black text-emerald-500 italic tracking-tighter shadow-emerald-500/50 drop-shadow-md">TRANSAKSI BERHASIL</h2>
-                <p className="text-zinc-500 text-sm font-bold uppercase tracking-widest mt-2">{merchant}</p>
+                <h2 className="text-4xl font-black text-emerald-500 italic tracking-tighter uppercase">SUCCESSFUL</h2>
+                <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em] mt-3">{merchant}</p>
              </div>
 
-             <div className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] p-6 space-y-4 mb-8">
-                <div className="flex justify-between items-center pb-4 border-b border-zinc-800/50">
-                   <p className="text-zinc-500 text-xs font-medium">Nominal</p>
-                   <p className="text-white font-bold text-lg">{formatIDR(parseFloat(amount))}</p>
+             <div className="bg-zinc-900 border border-zinc-800 rounded-[3rem] p-8 space-y-6 mb-10">
+                <div className="flex justify-between items-center pb-6 border-b border-white/5">
+                   <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">Amount Settled</p>
+                   <p className="text-white font-black text-2xl italic tracking-tighter">{formatIDR(parseFloat(amount))}</p>
                 </div>
-                <div className="space-y-4">
+                <div className="space-y-4 pt-2">
                    <div className="flex justify-between">
-                      <p className="text-zinc-500 text-xs">ID Transaksi</p>
-                      <p className="text-zinc-200 text-xs font-mono">{trxId}</p>
+                      <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-widest">Transaction ID</p>
+                      <p className="text-zinc-300 text-[10px] font-mono tracking-tighter">{trxId}</p>
                    </div>
                    <div className="flex justify-between">
-                      <p className="text-zinc-500 text-xs">Tanggal</p>
-                      <p className="text-zinc-200 text-xs">{new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+                      <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-widest">Network Node</p>
+                      <p className="text-zinc-300 text-[10px] uppercase font-black italic">Super-HQ-01</p>
                    </div>
                    <div className="flex justify-between">
-                      <p className="text-zinc-500 text-xs">Waktu</p>
-                      <p className="text-zinc-200 text-xs">{new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</p>
+                      <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-widest">Timestamp</p>
+                      <p className="text-zinc-300 text-[10px] font-black">{new Date().toLocaleString('id-ID')}</p>
                    </div>
-                   <div className="flex justify-between">
-                      <p className="text-zinc-500 text-xs">Metode</p>
-                      <p className="text-blue-400 text-xs font-bold uppercase tracking-widest">QRIS PAYMENT</p>
-                   </div>
-                   <div className="flex justify-between">
-                      <p className="text-zinc-500 text-xs">Biaya Admin</p>
-                      <p className="text-emerald-500 text-xs font-bold">Rp 0</p>
+                   <div className="flex justify-between items-center">
+                      <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-widest">Protocol</p>
+                      <div className="px-3 py-1 bg-blue-500/10 rounded-full border border-blue-500/20">
+                         <p className="text-blue-500 text-[8px] font-black uppercase tracking-[0.2em]">QRIS Dynamic AI</p>
+                      </div>
                    </div>
                 </div>
              </div>
 
              <button 
                onClick={onClose}
-               className="w-full py-5 bg-zinc-900 border border-zinc-800 rounded-3xl text-white font-bold hover:bg-zinc-800 transition-colors"
+               className="w-full py-6 bg-zinc-800 border border-zinc-700 rounded-[2rem] text-white font-black italic uppercase tracking-tighter hover:bg-zinc-700 transition-all active:scale-95"
              >
-               Selesai
+               Back to Terminal
              </button>
           </motion.div>
         )}
@@ -594,59 +722,113 @@ const ReceiveQRModal = ({ user, onClose }: { user: any, onClose: () => void }) =
       initial={{ opacity: 0 }} 
       animate={{ opacity: 1 }} 
       exit={{ opacity: 0 }} 
-      className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center p-8"
+      className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-2xl flex flex-col items-center justify-center p-8 overflow-y-auto"
     >
-      <div className="w-full max-w-xs flex flex-col items-center">
-         <div className="w-20 h-20 bg-white rounded-[2rem] flex items-center justify-center mb-8 shadow-2xl shadow-blue-500/20">
-            <img src={BANK_LOGOS['Super Bank Express']} className="w-12 h-12 object-contain" alt="Logo" />
-         </div>
-         
-         <div className="bg-white p-8 rounded-[40px] mb-8 shadow-[0_0_50px_rgba(37,99,235,0.2)]">
-            <QRCodeSVG 
-              value={qrData} 
-              size={200}
-              level="H"
-              includeMargin={false}
-              imageSettings={{
-                src: BANK_LOGOS['Super Bank Express'],
-                x: undefined,
-                y: undefined,
-                height: 40,
-                width: 40,
-                excavate: true,
-              }}
-            />
-         </div>
-         
-         <div className="text-center mb-10">
-            <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-1">{user.name}</h2>
-            <p className="text-blue-500 font-bold text-sm tracking-widest">{user.accountId}</p>
-         </div>
-         
-         <p className="text-zinc-500 text-[10px] uppercase font-black tracking-[0.2em] mb-8 text-center leading-relaxed">
-            Scan this QR code with another Super Bank app <br/> to receive instant funds
-         </p>
-         
-         <button 
-           onClick={onClose}
-           className="w-full py-5 bg-zinc-900 border border-zinc-800 rounded-3xl text-white font-bold"
-         >
-           Close
-         </button>
-      </div>
+      <motion.div 
+        initial={{ scale: 0.9, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        className="w-full max-w-sm"
+      >
+        <div className="bg-zinc-900 border border-white/5 rounded-[3rem] p-10 flex flex-col items-center shadow-2xl relative overflow-hidden">
+          {/* Decorative Elements */}
+          <div className="absolute top-0 inset-x-0 h-[200px] bg-gradient-to-b from-blue-500/10 to-transparent pointer-events-none" />
+          
+          <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mb-10 shadow-2xl relative z-10 p-2">
+             <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Logo" />
+          </div>
+          
+          <div className="relative z-10 mb-8 p-6 bg-white rounded-[2.5rem] shadow-[0_30px_60px_rgba(0,0,0,0.5)]">
+             <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-blue-500 rounded-tl-xl m-[-2px]" />
+             <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-blue-500 rounded-tr-xl m-[-2px]" />
+             <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-blue-500 rounded-bl-xl m-[-2px]" />
+             <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-blue-500 rounded-br-xl m-[-2px]" />
+             
+             <QRCodeSVG 
+               value={qrData} 
+               size={220}
+               level="H"
+               includeMargin={false}
+               imageSettings={{
+                 src: BANK_LOGOS['Super Bank Express'],
+                 x: undefined,
+                 y: undefined,
+                 height: 48,
+                 width: 48,
+                 excavate: true,
+               }}
+             />
+          </div>
+          
+          <div className="text-center mb-8 relative z-10 w-full">
+             <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-none mb-2">{user.name}</h2>
+             <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/10 rounded-2xl border border-blue-500/20">
+                <p className="text-blue-500 font-black text-xs tracking-[0.2em] uppercase">{user.accountId}</p>
+             </div>
+          </div>
+          
+          <div className="flex items-center gap-3 py-4 border-t border-white/5 w-full justify-center">
+             <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+             <p className="text-zinc-500 text-[10px] uppercase font-black tracking-[0.3em]">Ready for instant transfer</p>
+          </div>
+        </div>
+
+        <div className="mt-8 flex flex-col items-center">
+           <p className="text-zinc-600 text-[10px] uppercase font-black tracking-[0.4em] mb-10 text-center">
+              Scan with another <br/> Super Bank app
+           </p>
+           
+           <button 
+             onClick={onClose}
+             className="w-full py-6 bg-zinc-800 border border-zinc-700 rounded-[2rem] text-white font-black italic uppercase tracking-tighter shadow-xl active:scale-95 transition-all"
+           >
+             Close Terminal
+           </button>
+        </div>
+      </motion.div>
     </motion.div>
   );
 };
 
 export default function App() {
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  
+  // Connection listener
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   return (
     <ErrorBoundary>
-      <MainApp />
+      <div className="relative">
+        <AnimatePresence>
+          {isOffline && (
+            <motion.div 
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -20, opacity: 0 }}
+              className="fixed top-0 inset-x-0 z-[2000] bg-zinc-950/80 backdrop-blur-md border-b border-white/5 p-2 text-center"
+            >
+              <p className="text-zinc-500 text-[10px] uppercase font-black tracking-widest flex items-center justify-center gap-2">
+                <WifiOff className="w-3 h-3 text-zinc-600" />
+                Offline Mode • Quantum Cache Active
+              </p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <MainApp isOffline={isOffline} />
+      </div>
     </ErrorBoundary>
   );
 }
 
-function MainApp() {
+function MainApp({ isOffline }: { isOffline: boolean }) {
   const [loading, setLoading] = useState(true);
   const [activeView, setActiveView] = useState<View>('HOME');
   const [notification, setNotification] = useState<string | null>(null);
@@ -718,6 +900,19 @@ function MainApp() {
     const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
       setFirebaseUser(fUser);
       if (fUser) {
+        // Load from local storage immediately if offline
+        const cachedProfile = localStorage.getItem(`super_bank_profile_${fUser.uid}`);
+        if (cachedProfile) {
+          const profile = JSON.parse(cachedProfile);
+          setUser(profile.user);
+          setBalance(profile.balance);
+          
+          const cachedHistory = localStorage.getItem(`super_bank_history_${fUser.uid}`);
+          if (cachedHistory) {
+            setHistory(JSON.parse(cachedHistory));
+          }
+        }
+
         // Automatically ensure user document exists
         const checkProfile = async (retries = 3) => {
           try {
@@ -770,14 +965,22 @@ function MainApp() {
     const unsubUser = onSnapshot(userDocRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setUser({
+        const profile = {
           name: data.name || 'User',
           email: data.email || '',
           phone: data.phone || '',
           avatar: data.avatar || null,
           accountId: data.accountId || '',
-        });
+        };
+        setUser(profile);
         setBalance(data.balance || 0);
+
+        // Cache to local storage
+        localStorage.setItem(`super_bank_profile_${firebaseUser.uid}`, JSON.stringify({
+          user: profile,
+          balance: data.balance || 0,
+          timestamp: Date.now()
+        }));
       }
     }, (err) => {
         if (!err.message.includes('permission')) {
@@ -824,6 +1027,11 @@ function MainApp() {
         });
       });
       setHistory(trans);
+      
+      // Cache history for offline access
+      if (firebaseUser?.uid) {
+        localStorage.setItem(`super_bank_history_${firebaseUser.uid}`, JSON.stringify(trans));
+      }
     }, (err) => {
         if (!err.message.includes('permission')) {
             console.error(`TransSync Error:`, err);
@@ -869,7 +1077,7 @@ function MainApp() {
     }
   }, [loading]);
 
-  const handleQRISPayment = async (merchant: string, amount: number) => {
+  const handleQRISPayment = async (merchant: string, amount: number, recipientUid?: string) => {
     if (!firebaseUser) return;
     try {
         const userRef = doc(db, 'users', firebaseUser.uid);
@@ -878,27 +1086,73 @@ function MainApp() {
         await runTransaction(db, async (transaction) => {
             const userSnap = await transaction.get(userRef);
             if (!userSnap.exists()) throw new Error("User not found");
-            const newBal = userSnap.data().balance - amount;
+            const senderData = userSnap.data();
+            const newBal = senderData.balance - amount;
             if (newBal < 0) throw new Error("Saldo tidak cukup");
 
-            transaction.update(userRef, { balance: newBal });
-            transaction.set(transRef, {
-                name: merchant,
-                type: 'Merchant Payment',
-                category: 'Shopping',
-                amount: amount,
-                date: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
-                time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-                isPositive: false,
-                status: 'BERHASIL',
-                method: 'QRIS',
-                createdAt: serverTimestamp()
-            });
+            // If it's a transfer to another user
+            if (recipientUid) {
+                if (recipientUid === firebaseUser.uid) throw new Error("Tidak bisa transfer ke diri sendiri");
+                
+                const receiverRef = doc(db, 'users', recipientUid);
+                const receiverSnap = await transaction.get(receiverRef);
+                if (!receiverSnap.exists()) throw new Error("Penerima tidak ditemukan");
+                
+                const receiverData = receiverSnap.data();
+                const receiverTransRef = doc(collection(db, 'users', recipientUid, 'transactions'));
+                
+                // Update Sender
+                transaction.update(userRef, { balance: newBal });
+                transaction.set(transRef, {
+                    name: merchant,
+                    type: 'Transfer Out (QRIS)',
+                    category: 'Transfer',
+                    amount: amount,
+                    date: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
+                    time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+                    isPositive: false,
+                    status: 'BERHASIL',
+                    method: 'QRIS',
+                    recipientId: recipientUid,
+                    createdAt: serverTimestamp()
+                });
+                
+                // Update Receiver
+                transaction.update(receiverRef, { balance: receiverData.balance + amount });
+                transaction.set(receiverTransRef, {
+                    name: senderData.name || 'Anonymous User',
+                    type: 'Transfer In (QRIS)',
+                    category: 'Income',
+                    amount: amount,
+                    date: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
+                    time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+                    isPositive: true,
+                    status: 'BERHASIL',
+                    method: 'QRIS',
+                    senderId: firebaseUser.uid,
+                    createdAt: serverTimestamp()
+                });
+            } else {
+                // Generic Merchant Payment
+                transaction.update(userRef, { balance: newBal });
+                transaction.set(transRef, {
+                    name: merchant,
+                    type: 'Merchant Payment',
+                    category: 'Shopping',
+                    amount: amount,
+                    date: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
+                    time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+                    isPositive: false,
+                    status: 'BERHASIL',
+                    method: 'QRIS',
+                    createdAt: serverTimestamp()
+                });
+            }
         });
         setNotification(`Pembayaran Berhasil ke ${merchant}`);
-    } catch (err) {
+    } catch (err: any) {
         console.error(err);
-        setNotification("Gagal memproses pembayaran QRIS.");
+        setNotification(err.message || "Gagal memproses pembayaran QRIS.");
     }
   };
 
