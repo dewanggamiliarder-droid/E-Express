@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default deny for safety
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // --- User Profile Rules ---
+    match /users/{userId} {
+      // 1. Owner can fully manage their own profile
+      allow get, write: if isOwner(userId);
+      
+      // 2. Others can search for recipient profiles via ID or accountId
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // Necessary for searching by accountId
+
+      // 3. Update Balance (Transfer Logic)
+      // Allows a sender to increment the balance of a recipient
+      allow update: if isSignedIn() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance']) &&
+                    request.resource.data.balance > resource.data.balance;
+
+      // --- Transaction Sub-collection ---
+      match /transactions/{transactionId} {
+        // 1. Only owner can read their transaction history
+        allow read: if isOwner(userId);
+        
+        // 2. Owner can create their own records
+        allow create: if isOwner(userId);
+        
+        // 3. Sender can create a "credit" transaction record in recipient's history
+        allow create: if isSignedIn() && 
+                      request.resource.data.recipientUid == userId && 
+                      request.resource.data.isPositive == true &&
+                      request.resource.data.senderUid == request.auth.uid;
+      }
+    }
+
+    // Simple health check path
+    match /test/connection {
+      allow get: if true;
+    }
+  }
+}

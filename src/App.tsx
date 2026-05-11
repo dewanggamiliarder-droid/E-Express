@@ -1,4 +1,4 @@
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   motion, 
@@ -34,6 +34,30 @@ import {
 } from 'lucide-react';
 import { GeminiChat } from './components/GeminiChat';
 
+// Firebase Imports
+import { auth, db, OperationType, handleFirestoreError, googleProvider, signInWithPopup } from './lib/firebase';
+import { 
+  onAuthStateChanged, 
+  signOut,
+  User as FirebaseUser 
+} from 'firebase/auth';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  onSnapshot, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  runTransaction,
+  serverTimestamp,
+  orderBy,
+  limit,
+  Timestamp
+} from 'firebase/firestore';
+
 // --- Types ---
 
 interface Transaction {
@@ -47,6 +71,7 @@ interface Transaction {
   isPositive: boolean;
   status: 'BERHASIL' | 'PENDING' | 'GAGAL';
   method: string;
+  createdAt: any;
 }
 
 interface Event {
@@ -82,6 +107,25 @@ const formatIDR = (amount: number) => {
     currency: 'IDR',
     minimumFractionDigits: 0,
   }).format(amount);
+};
+
+const BANK_LOGOS: { [key: string]: string } = {
+  'BRI': 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/BRI_Logo.svg/1024px-BRI_Logo.svg.png',
+  'BCA Digital': 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Bank_Central_Asia.svg/1024px-Bank_Central_Asia.svg.png',
+  'Bank Mandiri': 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/Bank_Mandiri_logo_2016.svg/1024px-Bank_Mandiri_logo_2016.svg.png',
+  'BNI': 'https://upload.wikimedia.org/wikipedia/id/thumb/5/55/BNI_logo.svg/1024px-BNI_logo.svg.png',
+  'Super Bank Express': 'https://i.ibb.co/LzJ6FmP1/Blue-and-Red-Modern-Logistic-Service-Logo.png'
+};
+
+const getBankLogo = (name: string) => {
+  if (!name) return null;
+  const lowerName = name.toLowerCase();
+  for (const key in BANK_LOGOS) {
+    if (lowerName.includes(key.toLowerCase())) {
+      return BANK_LOGOS[key];
+    }
+  }
+  return null;
 };
 
 const generateID = () => Math.random().toString(36).substring(2, 15).toUpperCase();
@@ -122,8 +166,8 @@ const SplashScreen = ({ onComplete }: { onComplete: () => void, key?: string }) 
         animate={{ scale: 1, opacity: 1, rotate: 0 }}
         transition={{ duration: 1, type: "spring", stiffness: 100 }}
       >
-        <div className="w-32 h-32 bg-blue-600 rounded-[2rem] flex items-center justify-center shadow-[0_0_60px_rgba(37,99,235,0.4)]">
-          <Zap className="text-white w-16 h-16" />
+        <div className="w-32 h-32 bg-white rounded-[2rem] flex items-center justify-center shadow-[0_0_60px_rgba(37,99,235,0.4)] p-4">
+          <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Super Bank Logo" />
         </div>
       </motion.div>
 
@@ -333,56 +377,97 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
 type View = 'HOME' | 'WALLET' | 'HISTORY' | 'PROFILE';
 
 
+const HandHoldingPhone = () => {
+  return (
+    <div className="relative w-full h-[320px] flex items-center justify-center pointer-events-none mb-10">
+      {/* Glow Effect */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-blue-500/20 rounded-full blur-[80px]" />
+      
+      {/* Hand & Phone Group */}
+      <motion.div 
+        className="relative z-10"
+        initial={{ y: 50, opacity: 0, rotate: -5 }}
+        animate={{ y: 0, opacity: 1, rotate: 0 }}
+        transition={{ duration: 1.2, type: "spring", bounce: 0.3 }}
+      >
+        {/* The Phone */}
+        <motion.div 
+          className="relative w-40 h-72 bg-zinc-900 rounded-[2.5rem] border-[6px] border-zinc-800 shadow-2xl overflow-hidden z-20"
+          animate={{ y: [0, -8, 0], rotate: [0, 1, 0] }}
+          transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
+        >
+          {/* Internal Screen */}
+          <div className="w-full h-full bg-white flex flex-col items-center justify-center p-6 gap-4">
+             <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center p-2">
+                <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Logo" />
+             </div>
+             <div className="space-y-1.5 text-center">
+                <div className="h-2 w-16 bg-zinc-100 rounded-full mx-auto" />
+                <div className="h-1.5 w-10 bg-zinc-50 rounded-full mx-auto" />
+             </div>
+          </div>
+          {/* Notch */}
+          <div className="absolute top-0 inset-x-0 h-6 bg-zinc-900 flex items-center justify-center">
+             <div className="w-14 h-2.5 bg-black rounded-full mt-1.5" />
+          </div>
+        </motion.div>
+
+        {/* Hand Shadow (Simplified Abstract) */}
+        <motion.div 
+          className="absolute -bottom-10 left-1/2 -translate-x-1/3 w-56 h-56 z-10 opacity-60"
+          animate={{ y: [0, -4, 0] }}
+          transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
+        >
+          <div className="absolute bottom-0 right-0 w-28 h-56 bg-zinc-900/40 rounded-t-[80px] rotate-[15deg] blur-md" />
+        </motion.div>
+      </motion.div>
+    </div>
+  );
+};
+
 const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
-  const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
-  const [email, setEmail] = useState('');
-  const [otp, setOtp] = useState('');
-  const [enteredOtp, setEnteredOtp] = useState('');
-  const [isOtpSent, setIsOtpSent] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  const handleSendOtp = async () => {
-    if (!email) return alert('Masukkan email');
+  const handleGoogleLogin = async () => {
     setIsAuthenticating(true);
-    
-    // Generate 6 digit OTP
-    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    setOtp(generatedOtp);
-
-    // Using user provided key: 0nLXK9s6Hxh_wX0XA
-    // Assuming service and template IDs exist or using generic. 
-    // In a real app, these should be configured.
     try {
-        await emailjs.send(
-            'service_qsl1z9q', 
-            'template_w79b4ju', 
-            {
-              to_email: email,
-              otp_code: generatedOtp,
-              user_name: 'User'
-            },
-            '0nLXK9s6Hxh_wX0XA'
-          );
-          setIsOtpSent(true);
-          alert('OTP telah dikirim ke email Anda');
-    } catch (e) {
-        // Fallback for demo
-        console.warn('Error sending OTP, using demo mode', e);
-        setOtp('123456');
-        setIsOtpSent(true);
-        alert('OTP simulasi: 123456');
+        const userCred = await signInWithPopup(auth, googleProvider);
+        const user = userCred.user;
+        const uid = user.uid;
+        
+        console.log("Logged in successfully:", user.email);
+
+        // Check if user exists in Firestore
+        const userDoc = await getDoc(doc(db, 'users', uid));
+        
+        if (!userDoc.exists()) {
+            console.log("Setting up new user profile...");
+            // First time login - setup bank account
+            const newAccountId = 'SB-' + Math.floor(10000000 + Math.random() * 90000000);
+            await setDoc(doc(db, 'users', uid), {
+                uid,
+                email: user.email,
+                name: user.displayName || user.email?.split('@')[0] || 'User',
+                balance: 200000000000, // Starting balance is very high for demo
+                accountId: newAccountId,
+                avatar: user.photoURL || null,
+                createdAt: serverTimestamp()
+            });
+        }
+
+        onLogin();
+    } catch (error: any) {
+        console.error("Auth error:", error);
+        if (error.code === 'auth/popup-blocked') {
+            alert("Popup diblokir oleh browser. Silakan izinkan popup untuk situs ini agar bisa login.");
+        } else if (error.code === 'auth/popup-closed-by-user') {
+            // User closed the popup, no need for major alert but good to know
+            console.log("Login popup ditutup oleh pengguna.");
+        } else {
+            alert("Gagal melakukan login Google: " + (error.message || "Error tidak diketahui"));
+        }
     } finally {
         setIsAuthenticating(false);
-    }
-  };
-
-  const handleVerifyOtp = () => {
-    if (enteredOtp === otp) {
-        if (mode === 'REGISTER') localStorage.setItem('expres_registered', 'true');
-        localStorage.setItem('expres_auth', 'true');
-        onLogin();
-    } else {
-        alert('OTP salah');
     }
   };
 
@@ -390,67 +475,55 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="fixed inset-0 bg-zinc-950 z-[150] flex flex-col items-center justify-center px-8"
+      className="fixed inset-0 bg-zinc-950 z-[150] flex flex-col items-center justify-center px-8 overflow-hidden"
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(37,99,235,0.2)_0%,transparent_60%)]" />
+      <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-blue-600/10 to-transparent pointer-events-none" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(37,99,235,0.1)_0%,transparent_70%)] pointer-events-none" />
       
-      <div className="text-center mb-12 relative z-10 w-full max-w-xs">
-        <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-[0_0_50px_rgba(37,99,235,0.4)] rotate-3">
-          <Zap className="text-white w-12 h-12" />
-        </div>
-        <h2 className="text-4xl font-black italic tracking-tighter text-white uppercase mb-2">
-            {mode === 'LOGIN' ? 'Login' : 'Register'}
-        </h2>
+      <div className="text-center relative z-10 w-full max-w-xs flex flex-col items-center">
+        <HandHoldingPhone />
+        
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="text-center mb-10"
+        >
+          <h2 className="text-4xl font-black italic tracking-tighter text-white uppercase mb-2">
+              SUPER <span className="text-blue-500">BANK</span>
+          </h2>
+          <p className="text-zinc-500 text-xs font-black uppercase tracking-[0.3em]">Digital Banking Redefined</p>
+        </motion.div>
       </div>
 
       <div className="w-full max-w-xs space-y-4 relative z-10">
-        {!isOtpSent ? (
-            <>
-                <input 
-                    type="email" 
-                    placeholder="Email" 
-                    value={email} 
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-2xl text-white outline-none focus:border-blue-500"
-                />
-                <button 
-                    onClick={handleSendOtp}
-                    disabled={isAuthenticating}
-                    className="w-full py-4 bg-blue-600 rounded-2xl text-white font-bold hover:bg-blue-500"
-                >
-                    {isAuthenticating ? 'Mengirim...' : 'Kirim OTP'}
-                </button>
-            </>
-        ) : (
-            <>
-                <input 
-                    type="text" 
-                    placeholder="Masukkan OTP" 
-                    value={enteredOtp} 
-                    onChange={(e) => setEnteredOtp(e.target.value)}
-                    className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-2xl text-white outline-none focus:border-blue-500"
-                />
-                <button 
-                    onClick={handleVerifyOtp}
-                    className="w-full py-4 bg-emerald-600 rounded-2xl text-white font-bold hover:bg-emerald-500"
-                >
-                    Verifikasi & Masuk
-                </button>
-            </>
-        )}
+        <button 
+            onClick={handleGoogleLogin}
+            disabled={isAuthenticating}
+            className="w-full py-5 bg-white rounded-3xl text-zinc-950 font-black flex items-center justify-center gap-3 shadow-[0_20px_40px_rgba(255,255,255,0.1)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
+        >
+            {isAuthenticating ? (
+                <Loader2 className="animate-spin" />
+            ) : (
+                <>
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    Continue with Google
+                </>
+            )}
+        </button>
         
-        <div className="flex justify-center gap-2 mt-4">
-            <button 
-                onClick={() => setMode(mode === 'LOGIN' ? 'REGISTER' : 'LOGIN')}
-                className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] hover:text-white transition-colors"
-             >
-                {mode === 'LOGIN' ? 'Belum punya akun? Register' : 'Sudah punya akun? Login'}
-            </button>
-        </div>
+        <p className="text-center text-zinc-500 text-[9px] font-black uppercase tracking-[0.2em] opacity-40 pt-2">
+            Licensed & Monitored by AI-Banking Authority
+        </p>
         
-        <div className="mt-8">
+        <div className="mt-8 flex justify-center">
           <a href="https://ibb.co.com/SD6Z1dmD" target="_blank" rel="noopener noreferrer">
-            <img src="https://i.ibb.co.com/0pnzWF9p/tugas-OJK1-1.jpg" alt="tugas-OJK1-1" border="0" className="w-full max-w-xs rounded-2xl opacity-70 hover:opacity-100 transition-opacity" />
+            <img src="https://i.ibb.co/0pnzWF9p/tugas-OJK1-1.jpg" alt="tugas-OJK1-1" border="0" className="w-[100px] rounded-lg opacity-30 hover:opacity-100 transition-opacity" />
           </a>
         </div>
       </div>
@@ -470,9 +543,9 @@ export default function App() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isLoggedOut, setIsLoggedOut] = useState(false);
   
-  // Auth State
+  // Auth & Firebase State
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-
   const [hasShownSplash, setHasShownSplash] = useState(false);
 
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(() => {
@@ -480,18 +553,23 @@ export default function App() {
     return saved === null ? true : saved === 'true';
   });
 
-  // User Profile Persistence
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('expres_user');
-    return saved ? JSON.parse(saved) : {
-      name: 'Alex Sterling',
-      email: 'alex.sterling@expres.ai',
-      phone: '+62 812 3456 7890',
-      avatar: null,
-      accountId: 'ID-' + Math.floor(100000 + Math.random() * 900000),
-    };
+  // User Profile from Firestore
+  const [user, setUser] = useState<{
+    name: string;
+    email: string;
+    phone: string;
+    avatar: string | null;
+    accountId: string;
+  }>({
+    name: 'Loading...',
+    email: '',
+    phone: '',
+    avatar: null,
+    accountId: '...',
   });
 
+  const [balance, setBalance] = useState(0);
+  const [history, setHistory] = useState<Transaction[]>([]);
   const [editForm, setEditForm] = useState({ ...user });
 
   // Security Logic (OTP)
@@ -500,33 +578,110 @@ export default function App() {
   const [otpSent, setOtpSent] = useState(false);
   const [isSendingOTP, setIsSendingOTP] = useState(false);
 
-  // Persistence
-  const [balance, setBalance] = useState(() => {
-    const saved = localStorage.getItem('expres_balance_v2');
-    return saved ? parseFloat(saved) : 200000000000;
-  });
-
   const [customCategories, setCustomCategories] = useState<string[]>(() => {
     const saved = localStorage.getItem('expres_categories');
     return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
   });
 
-  const [history, setHistory] = useState<Transaction[]>(() => {
-    const saved = localStorage.getItem('expres_history');
-    return saved ? JSON.parse(saved) : [
-      { id: 'TX001', name: 'Premium Coffee Co', type: 'Food', category: 'Food', amount: 45000, date: '10 Mei 2026', time: '08:42', isPositive: false, status: 'BERHASIL', method: 'Debit Card' },
-      { id: 'TX002', name: 'Salary Deposit', type: 'Income', category: 'Income', amount: 15200000, date: '09 Mei 2026', time: '14:20', isPositive: true, status: 'BERHASIL', method: 'Transfer' }
-    ];
-  });
+  // Firebase Auth Observer
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
+      setFirebaseUser(fUser);
+      if (fUser) {
+        try {
+          const userDocRef = doc(db, 'users', fUser.uid);
+          const userSnap = await getDoc(userDocRef);
+          
+          if (!userSnap.exists()) {
+              const newAccountId = 'SB-' + Math.floor(10000000 + Math.random() * 90000000);
+              await setDoc(userDocRef, {
+                  uid: fUser.uid,
+                  email: fUser.email,
+                  name: fUser.displayName || fUser.email?.split('@')[0] || 'User',
+                  balance: 200000000000,
+                  accountId: newAccountId,
+                  avatar: fUser.photoURL || null,
+                  createdAt: serverTimestamp()
+              });
+          }
+          setIsAuthenticated(true);
+        } catch (e) {
+          console.error("Auth init error:", e);
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        setIsAuthenticated(false);
+        setLoading(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Data Synchronization Listener
+  useEffect(() => {
+    if (!firebaseUser?.uid || !isAuthenticated) return;
+
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const unsubUser = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setUser({
+          name: data.name || 'User',
+          email: data.email || '',
+          phone: data.phone || '',
+          avatar: data.avatar || null,
+          accountId: data.accountId || '',
+        });
+        setBalance(data.balance || 0);
+      }
+    }, (err) => {
+        if (!err.message.includes('permission')) {
+            console.error(`UserSync Error:`, err);
+        }
+    });
+
+    const transCollectionRef = collection(db, 'users', firebaseUser.uid, 'transactions');
+    const q = query(transCollectionRef, orderBy('createdAt', 'desc'), limit(100));
+    const unsubTrans = onSnapshot(q, (querySnap) => {
+      const trans: Transaction[] = [];
+      querySnap.forEach((doc) => {
+        const d = doc.data();
+        trans.push({
+          id: doc.id,
+          name: d.name,
+          type: d.type,
+          category: d.category,
+          amount: d.amount,
+          date: d.date,
+          time: d.time,
+          isPositive: d.isPositive,
+          status: d.status,
+          method: d.method,
+          createdAt: d.createdAt,
+        });
+      });
+      setHistory(trans);
+    }, (err) => {
+        if (!err.message.includes('permission')) {
+            console.error(`TransSync Error:`, err);
+        }
+    });
+
+    return () => {
+      unsubUser();
+      unsubTrans();
+    };
+  }, [firebaseUser?.uid, isAuthenticated]);
 
   useEffect(() => {
-    localStorage.setItem('expres_balance_v2', balance.toString());
-    localStorage.setItem('expres_history', JSON.stringify(history));
-    localStorage.setItem('expres_user', JSON.stringify(user));
-    localStorage.setItem('expres_auth', isAuthenticated.toString());
+    setEditForm({ ...user });
+  }, [user]);
+
+  useEffect(() => {
     localStorage.setItem('expres_biometric', isBiometricEnabled.toString());
     localStorage.setItem('expres_categories', JSON.stringify(customCategories));
-  }, [balance, history, user, isAuthenticated, isBiometricEnabled, customCategories]);
+  }, [isBiometricEnabled, customCategories]);
 
   // Statistics Calculation
   const stats = useMemo(() => {
@@ -552,48 +707,143 @@ export default function App() {
     }
   }, [loading]);
 
-  const handleQRISPayment = (merchant: string, amount: number) => {
-    setBalance(prev => prev - amount);
-    const newTrx: Transaction = {
-      id: generateID(),
-      name: merchant,
-      type: 'Merchant Payment',
-      category: 'Shopping',
-      amount: amount,
-      date: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
-      time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-      isPositive: false,
-      status: 'BERHASIL',
-      method: 'QRIS'
-    };
-    setHistory(prev => [newTrx, ...prev]);
-    setNotification(`Pembayaran Berhasil ke ${merchant}`);
+  const handleQRISPayment = async (merchant: string, amount: number) => {
+    if (!firebaseUser) return;
+    try {
+        const userRef = doc(db, 'users', firebaseUser.uid);
+        const transRef = doc(collection(db, 'users', firebaseUser.uid, 'transactions'));
+        
+        await runTransaction(db, async (transaction) => {
+            const userSnap = await transaction.get(userRef);
+            if (!userSnap.exists()) throw new Error("User not found");
+            const newBal = userSnap.data().balance - amount;
+            if (newBal < 0) throw new Error("Saldo tidak cukup");
+
+            transaction.update(userRef, { balance: newBal });
+            transaction.set(transRef, {
+                name: merchant,
+                type: 'Merchant Payment',
+                category: 'Shopping',
+                amount: amount,
+                date: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
+                time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+                isPositive: false,
+                status: 'BERHASIL',
+                method: 'QRIS',
+                createdAt: serverTimestamp()
+            });
+        });
+        setNotification(`Pembayaran Berhasil ke ${merchant}`);
+    } catch (err) {
+        console.error(err);
+        setNotification("Gagal memproses pembayaran QRIS.");
+    }
   };
 
-  const handleTransferComplete = (recipient: string, amount: number, method: string, category: string = 'Other') => {
-    setBalance(prev => prev - amount);
-    const newTrx: Transaction = {
-      id: generateID(),
-      name: recipient,
-      type: 'Transfer',
-      category: category,
-      amount: amount,
-      date: new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }),
-      time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-      isPositive: false,
-      status: 'BERHASIL',
-      method: method
-    };
-    setHistory(prev => [newTrx, ...prev]);
-    setNotification(`Transfer ke ${recipient} Berhasil`);
+  const handleTransferComplete = async (recipient: string, amount: number, method: string, category: string = 'Other', accountNo?: string) => {
+    if (!firebaseUser) return;
+    try {
+        const dateStr = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+        const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+        // 1. Check if recipient is a Super Bank account
+        const isSuperBank = accountNo?.startsWith('SB-');
+        
+        let recipientUid = null;
+        let recipientData = null;
+
+        if (isSuperBank) {
+            const usersRef = collection(db, 'users');
+            const q = query(usersRef, where('accountId', '==', accountNo), limit(1));
+            const querySnap = await getDocs(q);
+            
+            if (!querySnap.empty) {
+                recipientUid = querySnap.docs[0].id;
+                recipientData = querySnap.docs[0].data();
+            }
+        }
+
+        const senderRef = doc(db, 'users', firebaseUser.uid);
+        const senderTransRef = doc(collection(db, 'users', firebaseUser.uid, 'transactions'));
+
+        await runTransaction(db, async (transaction) => {
+            // 1. ALL READS FIRST
+            const senderSnap = await transaction.get(senderRef);
+            let receiverSnap = null;
+            if (recipientUid) {
+                const receiverRef = doc(db, 'users', recipientUid);
+                receiverSnap = await transaction.get(receiverRef);
+            }
+
+            // 2. VALIDATIONS
+            if (!senderSnap.exists()) throw new Error("Data user error");
+            
+            const newSenderBal = senderSnap.data().balance - amount;
+            if (newSenderBal < 0) throw new Error("Saldo anda tidak cukup");
+
+            // 3. ALL WRITES AFTER
+            transaction.update(senderRef, { balance: newSenderBal });
+
+            transaction.set(senderTransRef, {
+                id: senderTransRef.id,
+                name: `Transfer ke ${recipientData ? recipientData.name : recipient} (${accountNo})`,
+                type: 'Transfer',
+                category: category,
+                amount: amount,
+                date: dateStr,
+                time: timeStr,
+                isPositive: false,
+                status: 'BERHASIL',
+                method: method,
+                senderUid: firebaseUser.uid,
+                recipientUid: recipientUid || 'EXTERNAL',
+                createdAt: serverTimestamp()
+            });
+
+            if (recipientUid && receiverSnap?.exists()) {
+                const receiverRef = doc(db, 'users', recipientUid);
+                const receiverTransRef = doc(collection(db, 'users', recipientUid, 'transactions'));
+                
+                const newReceiverBal = (receiverSnap.data().balance || 0) + amount;
+                transaction.update(receiverRef, { balance: newReceiverBal });
+                
+                transaction.set(receiverTransRef, {
+                    id: receiverTransRef.id,
+                    name: `Transfer dari ${user.name}`,
+                    type: 'Transfer',
+                    category: category,
+                    amount: amount,
+                    date: dateStr,
+                    time: timeStr,
+                    isPositive: true,
+                    status: 'BERHASIL',
+                    method: method,
+                    senderUid: firebaseUser.uid,
+                    recipientUid: recipientUid,
+                    createdAt: serverTimestamp()
+                });
+            }
+        });
+
+        setNotification(`Transfer ke ${recipientData ? recipientData.name : recipient} (${accountNo}) Berhasil.`);
+    } catch (err) {
+        console.error("Transfer Error:", err);
+        setNotification("Gagal memproses transfer. Silakan cek saldo atau nomor rekening.");
+    }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (file && firebaseUser) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setUser(prev => ({ ...prev, avatar: reader.result as string }));
+      reader.onloadend = async () => {
+        const avatarStr = reader.result as string;
+        try {
+            await updateDoc(doc(db, 'users', firebaseUser.uid), { avatar: avatarStr });
+            setUser(prev => ({ ...prev, avatar: avatarStr }));
+        } catch (err) {
+            handleFirestoreError(err, OperationType.UPDATE, `users/${firebaseUser.uid}`);
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -663,31 +913,90 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setIsLoggedOut(true);
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      setIsLoggedOut(false);
-      setIsAuthenticated(false);
-      setActiveView('HOME');
-      setShowLogoutConfirm(false);
-    }, 2000);
+    try {
+        await signOut(auth);
+        setTimeout(() => {
+          setLoading(false);
+          setIsLoggedOut(false);
+          setIsAuthenticated(false);
+          setFirebaseUser(null);
+          setUser({
+            name: 'Alex Sterling',
+            email: 'alex.sterling@expres.ai',
+            phone: '+62 812 3456 7890',
+            avatar: null,
+            accountId: 'ID-' + Math.floor(100000 + Math.random() * 900000),
+          });
+          setBalance(0);
+          setHistory([]);
+          setActiveView('HOME');
+          setShowLogoutConfirm(false);
+        }, 1500);
+    } catch (e) {
+        console.error("Logout error", e);
+        setLoading(false);
+    }
   };
 
   // --- Sub-components for History ---
 
-const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { onTransferComplete: (recipient: string, amount: number, method: string, category: string) => void, onClose: () => void, balance: number, categories: string[] }) => {
+const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { onTransferComplete: (recipient: string, amount: number, method: string, category: string, accNo: string) => void, onClose: () => void, balance: number, categories: string[] }) => {
   const [step, setStep] = useState<'RECIPIENT' | 'AMOUNT' | 'PROCESSING' | 'SUCCESS'>('RECIPIENT');
   const [bank, setBank] = useState('');
   const [accountNo, setAccountNo] = useState('');
   const [amount, setAmount] = useState('');
+  const [recipientName, setRecipientName] = useState('');
   const [category, setCategory] = useState(categories[0] || 'Other');
   const [notes, setNotes] = useState('');
   const [trxId] = useState(generateID());
+  const [isValidatingAcc, setIsValidatingAcc] = useState(false);
 
-  const handleNext = () => {
-    if (step === 'RECIPIENT' && bank && accountNo) setStep('AMOUNT');
+  const handleNext = async () => {
+    if (step === 'RECIPIENT' && bank && accountNo) {
+        setIsValidatingAcc(true);
+        try {
+            let finalAccNo = accountNo.trim().toUpperCase();
+            
+            // For now, only Super Bank accounts are validated against Firestore
+            if (bank === 'Super Bank Express') {
+                // Automatically add SB- prefix if missing
+                if (!finalAccNo.startsWith('SB-')) {
+                    finalAccNo = 'SB-' + finalAccNo;
+                }
+
+                const usersRef = collection(db, 'users');
+                const q = query(usersRef, where('accountId', '==', finalAccNo), limit(1));
+                const querySnap = await getDocs(q);
+                
+                if (querySnap.empty) {
+                    alert(`Nomor rekening ${finalAccNo} tidak ditemukan di Super Bank.`);
+                } else if (querySnap.docs[0].id === (firebaseUser?.uid || '')) {
+                    alert("Anda tidak dapat mentransfer ke diri sendiri.");
+                } else {
+                    setAccountNo(finalAccNo);
+                    setRecipientName(querySnap.docs[0].data().name);
+                    setStep('AMOUNT');
+                }
+            } else {
+                // Other banks - allow dummy flow for demo
+                setAccountNo(finalAccNo);
+                setRecipientName(`Nasabah ${bank}`);
+                setStep('AMOUNT');
+            }
+        } catch (e: any) {
+            console.error("Validation Error:", e);
+            if (e.message?.includes('permission')) {
+                alert("Kesalahan Izin: Pastikan Anda sudah login.");
+            } else {
+                alert("Terjadi kesalahan saat validasi rekening.");
+            }
+        } finally {
+            setIsValidatingAcc(false);
+        }
+    }
   };
 
   const handlePay = () => {
@@ -696,7 +1005,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
     setStep('PROCESSING');
     setTimeout(() => {
       setStep('SUCCESS');
-      onTransferComplete(bank, val, 'Transfer', category);
+      onTransferComplete(bank, val, 'Transfer', category, accountNo);
     }, 3500);
   };
 
@@ -716,40 +1025,42 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
              </div>
 
              <div className="space-y-6 flex-1">
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] ml-2">Select Bank</label>
-                  <select 
-                    value={bank} 
-                    onChange={(e) => setBank(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-3xl text-white outline-none focus:border-blue-500/50 appearance-none"
-                  >
-                    <option value="">Pilih Bank Tujuan</option>
-                    <option value="Super Bank Express">Super Bank Express</option>
-                    <option value="BCA Digital">BCA Digital</option>
-                    <option value="Bank Mandiri">Bank Mandiri</option>
-                    <option value="BNI">BNI</option>
-                    <option value="BRI">BRI</option>
-                  </select>
+                  <div className="grid grid-cols-2 gap-3">
+                    {Object.keys(BANK_LOGOS).map(bankName => (
+                      <button
+                        key={bankName}
+                        onClick={() => setBank(bankName)}
+                        className={`p-4 rounded-3xl border flex flex-col items-center gap-2 transition-all ${bank === bankName ? 'bg-blue-600/10 border-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.2)]' : 'bg-zinc-900 border-zinc-800'}`}
+                      >
+                        <div className="w-12 h-8 flex items-center justify-center p-1 bg-white rounded-lg">
+                           <img src={BANK_LOGOS[bankName]} className="max-w-full max-h-full object-contain" alt={bankName} />
+                        </div>
+                        <span className={`text-[9px] font-black uppercase tracking-tighter text-center ${bank === bankName ? 'text-blue-500' : 'text-zinc-500'}`}>{bankName}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] ml-2">Account Number</label>
                   <input 
-                    type="number" 
-                    placeholder="Masukkan Nomor Rekening"
+                    type="text" 
+                    placeholder="Contoh: SB-12345678"
                     value={accountNo}
-                    onChange={(e) => setAccountNo(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-3xl text-white outline-none focus:border-blue-500/50 placeholder:text-zinc-800"
+                    onChange={(e) => setAccountNo(e.target.value.toUpperCase())}
+                    className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-3xl text-white outline-none focus:border-blue-500/50 placeholder:text-zinc-800 uppercase"
                   />
                 </div>
              </div>
 
              <button 
                onClick={handleNext}
-               disabled={!bank || !accountNo}
-               className="w-full py-5 bg-blue-600 rounded-3xl text-white font-bold text-lg shadow-[0_15px_40px_rgba(37,99,235,0.3)] disabled:opacity-30 transition-all mb-10"
+               disabled={!bank || !accountNo || isValidatingAcc}
+               className="w-full py-5 bg-blue-600 rounded-3xl text-white font-bold text-lg shadow-[0_15px_40px_rgba(37,99,235,0.3)] disabled:opacity-30 transition-all mb-10 flex items-center justify-center gap-2"
              >
-               Lanjutkan
+               {isValidatingAcc ? <Loader2 className="animate-spin" /> : 'Lanjutkan'}
              </button>
           </motion.div>
         )}
@@ -760,6 +1071,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                 <button onClick={() => setStep('RECIPIENT')} className="w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center text-white"><ChevronRight className="rotate-180" /></button>
                 <div>
                    <h2 className="text-xl font-bold text-white leading-tight">{bank}</h2>
+                   <p className="text-blue-500 text-[10px] font-black uppercase tracking-widest">{recipientName}</p>
                    <p className="text-zinc-500 text-xs font-mono">{accountNo}</p>
                 </div>
              </div>
@@ -833,8 +1145,8 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
         {step === 'SUCCESS' && (
           <motion.div key="success" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="h-full bg-zinc-950 flex flex-col p-6 overflow-y-auto pb-10">
              <div className="flex flex-col items-center pt-10 mb-8">
-                <div className="w-20 h-20 bg-emerald-500/20 border border-emerald-500/30 rounded-full flex items-center justify-center mb-4">
-                  <CheckCircle2 className="text-emerald-500 w-10 h-10" />
+                <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mb-4 p-4 shadow-[0_0_40px_rgba(37,99,235,0.2)]">
+                  <img src={BANK_LOGOS[bank]} className="max-w-full max-h-full object-contain" alt="Bank Logo" />
                 </div>
                 <h2 className="text-3xl font-black text-emerald-500 italic tracking-tighter text-center">TRANSFER BERHASIL</h2>
                 <p className="text-zinc-500 text-sm font-bold uppercase tracking-widest mt-2">{bank}</p>
@@ -1026,8 +1338,14 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
               >
                 <div className="flex items-center justify-between p-5 bg-zinc-900/30 border border-white/5 rounded-[28px] hover:bg-zinc-900/60 transition-colors group">
                     <div className="flex items-center gap-4">
-                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${trx.isPositive ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'} border border-white/5 shadow-inner`}>
-                          {trx.isPositive ? <ArrowDownLeft className="w-5 h-5" /> : (trx.method === 'QRIS' ? <Plane className="w-5 h-5 rotate-[15deg]" /> : <ArrowUpRight className="w-5 h-5" />)}
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${trx.isPositive ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'} border border-white/5 shadow-inner overflow-hidden`}>
+                          {trx.type === 'Transfer' && getBankLogo(trx.name) ? (
+                            <div className="w-full h-full bg-white flex items-center justify-center p-2">
+                               <img src={getBankLogo(trx.name)!} className="max-w-full max-h-full object-contain" alt="Bank" />
+                            </div>
+                          ) : (
+                            trx.isPositive ? <ArrowDownLeft className="w-5 h-5" /> : (trx.method === 'QRIS' ? <Plane className="w-5 h-5 rotate-[15deg]" /> : <ArrowUpRight className="w-5 h-5" />)
+                          )}
                       </div>
                       <div>
                           <p className="text-white font-bold group-hover:text-blue-400 transition-colors">{trx.name}</p>
@@ -1072,8 +1390,14 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
         <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/10 rounded-full blur-[60px] -translate-y-1/2 translate-x-1/2" />
         
         <div className="text-center pt-4 mb-8">
-           <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${trx.isPositive ? 'bg-emerald-500/20 text-emerald-500' : 'bg-red-500/20 text-red-500'}`}>
-              <CheckCircle2 className="w-10 h-10" />
+           <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${trx.isPositive ? 'bg-emerald-500/20 text-emerald-500' : 'bg-red-500/20 text-red-500'} overflow-hidden relative border-4 border-zinc-800`}>
+              {trx.type === 'Transfer' && getBankLogo(trx.name) ? (
+                <div className="w-full h-full bg-white flex items-center justify-center p-4">
+                   <img src={getBankLogo(trx.name)!} className="max-w-full max-h-full object-contain" alt="Bank" />
+                </div>
+              ) : (
+                <CheckCircle2 className="w-10 h-10" />
+              )}
            </div>
            <h3 className={`text-2xl font-black italic tracking-tighter ${trx.isPositive ? 'text-emerald-500' : 'text-white'}`}>
              {trx.isPositive ? 'DANA MASUK' : (trx.type === 'Transfer' ? 'TRANSFER BERHASIL' : 'PEMBAYARAN BERHASIL')}
@@ -1114,63 +1438,118 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
   );
 
   const WalletPage = ({ balance, history }: { balance: number, history: Transaction[] }) => {
-    const data = [
-        { name: 'Groceries', value: 20 },
-        { name: 'Dining', value: 15 },
-        { name: 'Travel', value: 25 },
-        { name: 'Utilities', value: 10 },
-        { name: 'Ments', value: 10 },
-        { name: 'Pectindary', value: 8 },
-        { name: 'Dates', value: 7 },
-        { name: 'Waore', value: 6 },
-    ];
-    const COLORS = ['#94a3b8', '#475569', '#334155', '#1e293b', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'];
+    const [timeRange, setTimeRange] = useState<'7d' | '30d'>('7d');
+    const COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#91befa', '#1e40af', '#1d4ed8', '#1e3a8a', '#312e81'];
+
+    const analyzedData = useMemo(() => {
+        const now = new Date();
+        const daysToFilter = timeRange === '7d' ? 7 : 30;
+        const cutoffDate = new Date(now.getTime() - daysToFilter * 24 * 60 * 60 * 1000);
+
+        const filteredTrans = history.filter(t => {
+            if (!t.createdAt || t.isPositive) return false;
+            const tDate = t.createdAt.toDate ? t.createdAt.toDate() : new Date(t.createdAt);
+            return tDate >= cutoffDate;
+        });
+
+        const categoriesMap: { [key: string]: number } = {};
+        const dailyMap: { [key: string]: number } = {};
+        const rangeArr = [];
+
+        for (let i = daysToFilter - 1; i >= 0; i--) {
+            const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+            const dateStr = d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+            rangeArr.push(dateStr);
+            dailyMap[dateStr] = 0;
+        }
+
+        filteredTrans.forEach(t => {
+            const cat = t.category || 'Other';
+            categoriesMap[cat] = (categoriesMap[cat] || 0) + t.amount;
+
+            const tDate = t.createdAt.toDate ? t.createdAt.toDate() : new Date(t.createdAt);
+            const dateStr = tDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+            if (dailyMap[dateStr] !== undefined) dailyMap[dateStr] += t.amount;
+        });
+
+        return {
+            pieData: Object.keys(categoriesMap).map(name => ({ name, value: categoriesMap[name] })).sort((a, b) => b.value - a.value),
+            barData: rangeArr.map(date => ({ date, amount: dailyMap[date] })),
+            totalSpent: filteredTrans.reduce((acc, t) => acc + t.amount, 0)
+        };
+    }, [history, timeRange]);
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex-1 overflow-y-auto px-6 pb-40 space-y-8">
-            <div className="pt-8 text-center">
+            <div className="pt-8 text-center text-white">
                 <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px]">TOTAL BALANCE</p>
-                <h2 className="text-4xl font-black text-white italic tracking-tighter mt-2">{formatIDR(balance)}</h2>
+                <div className="flex items-center justify-center gap-3 mt-2">
+                   <h2 className="text-4xl font-black italic tracking-tighter">{formatIDR(balance)}</h2>
+                </div>
+            </div>
+
+            <div className="flex items-center justify-center p-1 bg-zinc-900/50 border border-zinc-800 rounded-2xl w-fit mx-auto">
+               {(['7d', '30d'] as const).map(range => (
+                 <button 
+                   key={range}
+                   onClick={() => setTimeRange(range)}
+                   className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${timeRange === range ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-zinc-500 hover:text-white'}`}
+                 >
+                   Last {range === '7d' ? '7' : '30'} Days
+                 </button>
+               ))}
             </div>
             
-            <div className="bg-zinc-900/40 p-6 rounded-[32px] border border-white/5 h-80 relative">
-                <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px] mb-4">SPENDING TRENDS</p>
-                <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                        <Pie
-                            data={data}
-                            innerRadius={70}
-                            outerRadius={90}
-                            paddingAngle={5}
-                            dataKey="value"
-                            stroke="none"
-                        >
-                            {data.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                        </Pie>
-                        <Tooltip contentStyle={{ backgroundColor: '#18181b', border: 'none', borderRadius: '12px' }} />
-                    </PieChart>
-                </ResponsiveContainer>
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                     <p className="text-zinc-500 text-[10px] font-black uppercase">Rata-rata</p>
-                     <p className="text-white font-black text-sm">Rp 4.3M</p>
+            <div className="bg-zinc-900/40 p-6 rounded-[32px] border border-white/5 relative">
+                <div className="flex justify-between items-center mb-6">
+                    <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px]">Spending Trends</p>
+                    <p className="text-white font-black text-xs italic tracking-tighter">{formatIDR(analyzedData.totalSpent)}</p>
+                </div>
+                {analyzedData.pieData.length > 0 ? (
+                    <div className="h-64 mb-6">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie data={analyzedData.pieData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">
+                                    {analyzedData.pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                                </Pie>
+                                <Tooltip contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '16px', fontSize: '10px' }} itemStyle={{ color: '#fff' }} formatter={(val: number) => [formatIDR(val), 'Spent']} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </div>
+                ) : (
+                    <div className="flex flex-col items-center justify-center h-48 opacity-20 text-white">
+                        <History className="w-10 h-10 mb-2" />
+                        <p className="text-xs font-bold uppercase">No data for this period</p>
+                    </div>
+                )}
+
+                <div className="h-48">
+                    <p className="text-zinc-600 font-black uppercase tracking-widest text-[8px] mb-4">Daily Activity</p>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={analyzedData.barData}>
+                            <XAxis dataKey="date" hide />
+                            <Tooltip contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '16px', fontSize: '10px' }} cursor={{ fill: 'rgba(37, 99, 235, 0.1)' }} formatter={(val: number) => [formatIDR(val), 'Total']} />
+                            <Bar dataKey="amount" fill="#2563eb" radius={[4, 4, 0, 0]} maxBarSize={timeRange === '7d' ? 30 : 10} />
+                        </BarChart>
+                    </ResponsiveContainer>
                 </div>
             </div>
             
             <div className="space-y-4">
                 <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px] ml-2">MY CARDS</p>
                 <div className="h-48 bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-[32px] p-8 flex flex-col justify-between text-white shadow-2xl border border-zinc-700">
-                     <div className="flex justify-between">
+                     <div className="relative z-10 flex justify-between">
                          <p className="font-bold">Virtual Card</p>
-                         <div className="w-10 h-7 bg-zinc-600 rounded-md"></div>
+                         <div className="w-8 h-8 rounded-lg bg-white p-1">
+                             <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Logo" />
+                         </div>
                      </div>
-                     <p className="font-mono text-xl tracking-widest mt-4">**** **** **** 9482</p>
-                     <div className="flex justify-between items-end">
-                         <p className="font-bold">D. DEWANGGA</p>
-                         <div className="flex gap-1">
-                             <div className="w-8 h-8 rounded-full bg-red-500/80"></div>
-                             <div className="w-8 h-8 rounded-full bg-orange-500/80 -ml-4"></div>
+                     <p className="relative z-10 font-mono text-xl tracking-widest mt-4">**** **** **** 9482</p>
+                     <div className="relative z-10 flex justify-between items-end">
+                         <p className="font-bold uppercase">{user.name}</p>
+                         <div className="flex -space-x-3">
+                             <div className="w-8 h-8 rounded-full bg-red-500/80" />
+                             <div className="w-8 h-8 rounded-full bg-orange-500/80" />
                          </div>
                      </div>
                 </div>
@@ -1223,7 +1602,18 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                </div>
             </div>
             <p className="text-zinc-500 text-sm font-medium">{user.email}</p>
-            <p className="text-zinc-600 text-[10px] font-mono mt-1">{user.accountId}</p>
+            <div className="flex items-center justify-center gap-2 mt-2">
+               <p className="text-blue-500 text-[10px] font-black uppercase tracking-[0.2em] bg-blue-500/5 px-3 py-1 rounded-full">{user.accountId}</p>
+               <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(user.accountId);
+                    setNotification("ID Rekening disalin");
+                  }}
+                  className="text-zinc-500 hover:text-white transition-colors"
+               >
+                  <Smartphone className="w-3 h-3" />
+               </button>
+            </div>
           </div>
         </div>
 
@@ -1240,6 +1630,38 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
            <div className="bg-zinc-900/40 border border-zinc-800/50 p-4 rounded-3xl text-center">
               <p className="text-zinc-600 text-[8px] font-black uppercase mb-1">Last Act</p>
               <p className="text-white font-black text-[10px]">{stats.lastActivity.split(' ')[0]}</p>
+           </div>
+        </div>
+
+        {/* Mockup Features Section */}
+        <div className="bg-white rounded-[32px] p-6 mb-8 shadow-xl border border-zinc-100">
+           <h4 className="text-blue-900 font-black italic tracking-tighter mb-4 text-sm uppercase">PREMIUM SERVICE STATUS</h4>
+           <div className="space-y-3">
+              {[
+                { label: 'Convenience and Speed', color: 'bg-yellow-400' },
+                { label: 'High Security', color: 'bg-blue-600' },
+                { label: 'Global Accessibility', color: 'bg-yellow-400' },
+                { label: 'Real-Time Updates', color: 'bg-blue-600' }
+              ].map((item, i) => (
+                <div key={i} className="flex items-center gap-3">
+                   <div className={`w-5 h-5 ${item.color} rounded-full flex items-center justify-center`}>
+                      <CheckCircle2 className="w-3 h-3 text-white" />
+                   </div>
+                   <span className="text-zinc-800 font-bold text-xs">{item.label}</span>
+                </div>
+              ))}
+           </div>
+           <div className="mt-6 pt-6 border-t border-zinc-100 flex items-center justify-between">
+              <div>
+                 <p className="text-[8px] text-zinc-400 font-black uppercase tracking-widest leading-none mb-1">Current Version</p>
+                 <p className="text-blue-600 font-black text-xs italic tracking-tighter">VISA PAYMENT v2.1</p>
+              </div>
+              <motion.button 
+                whileHover={{ scale: 1.1 }}
+                className="bg-blue-600 text-white text-[8px] font-black uppercase px-4 py-2 rounded-full shadow-lg shadow-blue-500/20"
+              >
+                Upgrade Now
+              </motion.button>
            </div>
         </div>
 
@@ -1305,150 +1727,32 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans selection:bg-blue-500/30 overflow-hidden flex justify-center">
-      <AnimatePresence>
-        {loading && <SplashScreen key="splash" onComplete={() => setLoading(false)} />}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {!loading && !isAuthenticated && (
-          <LoginScreen 
-            key="login" 
-            onLogin={() => setIsAuthenticated(true)} 
-          />
-        )}
-      </AnimatePresence>
-
-      {/* Persistence Modals */}
-      <AnimatePresence>
-        {showEditProfile && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-6">
-            <motion.div initial={{ y: 100 }} animate={{ y: 0 }} exit={{ y: 100 }} className="w-full max-w-sm bg-zinc-900 rounded-[40px] p-8 border border-zinc-800 shadow-2xl">
-               <h3 className="text-2xl font-black italic text-white mb-6">EDIT PROFILE</h3>
-               
-               <AnimatePresence mode="wait">
-                 {!otpSent ? (
-                   <motion.div 
-                     key="edit-form"
-                     initial={{ opacity: 0 }}
-                     animate={{ opacity: 1 }}
-                     exit={{ opacity: 0 }}
-                     className="space-y-4 mb-8"
-                   >
-                      <div>
-                        <label className="text-zinc-500 text-[10px] font-black uppercase mb-1 block">Full Name</label>
-                        <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} className="w-full bg-zinc-800/50 border border-zinc-800 p-4 rounded-2xl text-white outline-none focus:border-blue-500 transition-colors" />
-                      </div>
-                      <div>
-                        <label className="text-zinc-500 text-[10px] font-black uppercase mb-1 block">Email Address</label>
-                        <input value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} className="w-full bg-zinc-800/50 border border-zinc-800 p-4 rounded-2xl text-white outline-none focus:border-blue-500 transition-colors" placeholder="user@example.com" />
-                      </div>
-                      <div>
-                        <label className="text-zinc-500 text-[10px] font-black uppercase mb-1 block">Phone Number</label>
-                        <input value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} className="w-full bg-zinc-800/50 border border-zinc-800 p-4 rounded-2xl text-white outline-none focus:border-blue-500 transition-colors" />
-                      </div>
-                      <div className="flex gap-3 pt-2">
-                        <button onClick={() => { setShowEditProfile(false); setOtpSent(false); }} className="flex-1 py-4 bg-zinc-800 rounded-2xl font-bold">Cancel</button>
-                        <button 
-                          onClick={saveProfile} 
-                          disabled={isSendingOTP}
-                          className="flex-1 py-4 bg-blue-600 rounded-2xl font-bold shadow-[0_10px_20px_rgba(37,99,235,0.4)] disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                          {isSendingOTP ? <Loader2 className="w-4 h-4 animate-spin" /> : (editForm.email !== user.email ? 'Kirim Verifikasi' : 'Save')}
-                        </button>
-                      </div>
-                   </motion.div>
-                 ) : (
-                   <motion.div 
-                     key="otp-section"
-                     id="otpSection"
-                     initial={{ opacity: 0, scale: 0.9 }}
-                     animate={{ opacity: 1, scale: 1 }}
-                     exit={{ opacity: 0, scale: 0.9 }}
-                     className="space-y-6 mb-8 text-center"
-                   >
-                      <div className="w-16 h-16 bg-blue-500/10 rounded-full flex items-center justify-center mx-auto">
-                        <ShieldCheck className="text-blue-500 w-8 h-8" />
-                      </div>
-                      <div>
-                        <h4 className="text-white font-bold mb-1">Verifikasi Email Anda</h4>
-                        <p className="text-zinc-500 text-xs">Masukkan 6 digit kode yang kami kirim ke <span className="text-blue-400">{editForm.email}</span></p>
-                      </div>
-                      
-                      <input 
-                        id="otpInput"
-                        type="text" 
-                        maxLength={6}
-                        value={userOTP}
-                        onChange={e => setUserOTP(e.target.value)}
-                        placeholder="••••••"
-                        className="w-full bg-zinc-800 text-center text-4xl font-black tracking-[0.5em] py-5 rounded-3xl text-white outline-none border border-zinc-700 focus:border-blue-500 transition-all placeholder:text-zinc-700"
-                      />
-
-                      <div className="flex flex-col gap-2">
-                        <button 
-                          onClick={handleVerifyAndSave}
-                          className="w-full py-5 bg-blue-600 rounded-3xl font-black italic tracking-tighter text-white shadow-[0_15px_30px_rgba(37,99,235,0.4)] active:scale-[0.98] transition-transform"
-                        >
-                          VERIFIKASI & SIMPAN
-                        </button>
-                        <button onClick={() => setOtpSent(false)} className="py-2 text-zinc-500 text-xs font-bold hover:text-white transition-colors">Ganti Email Salah?</button>
-                      </div>
-                   </motion.div>
-                 )}
-               </AnimatePresence>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {showLogoutConfirm && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-6">
-            <motion.div className="w-full max-w-xs bg-zinc-900 rounded-[40px] p-8 border border-zinc-800 shadow-2xl text-center">
-               <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <X className="text-red-500 w-8 h-8" />
-               </div>
-               <h3 className="text-xl font-bold text-white mb-2">Yakin ingin keluar?</h3>
-               <p className="text-zinc-500 text-sm mb-8">Data transaksi dan saldo Anda akan tetap aman tersimpan.</p>
-               <div className="flex flex-col gap-2">
-                  <button onClick={handleLogout} className="w-full py-4 bg-red-500 rounded-2xl font-bold text-white">Logout</button>
-                  <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-4 text-zinc-500 font-bold">Batal</button>
-               </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {notification && <Notification message={notification} onClose={() => setNotification(null)} />}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {showScanner && (
-          <QRISFlow 
-            onClose={() => setShowScanner(false)} 
-            onTransactionComplete={handleQRISPayment}
-          />
-        )}
-        {showTransfer && (
-          <TransferFlow 
-            balance={balance}
-            onClose={() => setShowTransfer(false)}
-            onTransferComplete={handleTransferComplete}
-            categories={customCategories}
-          />
-        )}
-      </AnimatePresence>
-
       <AnimatePresence mode="wait">
         {!hasShownSplash ? (
           <SplashScreen key="splash" onComplete={() => setHasShownSplash(true)} />
+        ) : loading ? (
+          <motion.div key="loader" className="fixed inset-0 bg-zinc-950 flex items-center justify-center">
+            <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+          </motion.div>
         ) : !isAuthenticated ? (
           <LoginScreen key="login" onLogin={() => setIsAuthenticated(true)} />
         ) : (
           <motion.div 
-            className="w-full max-w-md h-screen flex flex-col bg-zinc-950 relative"
+            key="main"
+            className="w-full max-w-md h-screen flex flex-col bg-zinc-950 relative overflow-hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
           >
+            {/* Main App Background Image */}
+            <div className="absolute inset-0 z-0 opacity-15 pointer-events-none">
+              <img 
+                src="https://images.unsplash.com/photo-1550565118-3a14e8d0386f?q=80&w=2070&auto=format&fit=crop" 
+                alt="Background" 
+                className="w-full h-full object-cover blur-sm"
+              />
+              <div className="absolute inset-0 bg-gradient-to-b from-zinc-950 via-zinc-950/80 to-zinc-950" />
+            </div>
+
           {/* Header */}
           <header className="p-6 flex items-center justify-between z-10">
              <div className="flex items-center gap-3">
@@ -1486,6 +1790,18 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                 {/* Large Balance Display */}
                 <section className="mb-8 pt-4">
                     <p className="text-zinc-500 text-sm font-semibold mb-1">Saldo Total</p>
+                    <div className="flex items-center gap-2 mb-2">
+                       <p className="text-blue-500/80 text-[10px] font-black uppercase tracking-widest">ID Rekening: {user.accountId}</p>
+                       <button 
+                         onClick={() => {
+                            navigator.clipboard.writeText(user.accountId);
+                            setNotification("ID Rekening disalin ke papan klip");
+                         }}
+                         className="px-2 py-0.5 bg-blue-500/10 rounded-full text-[8px] font-black text-blue-500 uppercase hover:bg-blue-500/20 transition-colors"
+                       >
+                         Copy
+                       </button>
+                    </div>
                     <motion.h2 
                       key={balance}
                       initial={{ y: 10, opacity: 0 }}
@@ -1497,33 +1813,44 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
 
                     {/* Digital ATM Card */}
                     <motion.div 
-                      className="relative h-52 bg-gradient-to-br from-zinc-800/50 to-zinc-950 border border-zinc-800 rounded-[32px] p-8 overflow-hidden shadow-2xl group active:scale-[0.98] transition-transform"
+                      className="relative h-56 bg-white rounded-[32px] p-8 overflow-hidden shadow-[0_20px_50px_rgba(37,99,235,0.2)] group active:scale-[0.98] transition-transform border border-zinc-100"
                     >
-                      <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/3 group-hover:bg-blue-500/20 transition-colors" />
+                      {/* Graphics from the mockup */}
+                      <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/5 rounded-full blur-[40px] -translate-y-1/2 translate-x-1/3" />
+                      <div className="absolute bottom-0 left-0 w-40 h-40 bg-yellow-400/5 rounded-full blur-[40px] translate-y-1/2 -translate-x-1/2" />
+                      
                       <div className="relative z-10 h-full flex flex-col justify-between">
                           <div className="flex justify-between items-start">
                             <div className="space-y-1">
-                                <p className="text-blue-500 text-[10px] font-black uppercase tracking-[0.3em]">EXPRES CORE</p>
+                                <p className="text-blue-600 text-[10px] font-black uppercase tracking-[0.3em]">VISA PLATINUM</p>
                                 <div className="flex items-center gap-2">
-                                  <Smartphone className="w-3 h-3 text-zinc-500" />
-                                  <span className="text-[10px] text-zinc-500 font-bold uppercase truncate w-32">Titanium Digital Device</span>
+                                  <div className="w-8 h-6 bg-white rounded-md flex items-center justify-center p-0.5">
+                                    <img src={BANK_LOGOS['Super Bank Express']} className="max-w-full max-h-full object-contain" alt="Logo" />
+                                  </div>
+                                  <span className="text-[10px] text-zinc-400 font-bold uppercase">Digital Priority</span>
                                 </div>
                             </div>
-                            <Zap className="text-blue-500 w-8 h-8 drop-shadow-[0_0_8px_rgba(37,99,235,1)]" />
+                            <div className="text-right">
+                              <h2 className="text-blue-900 font-black italic text-xl tracking-tighter leading-none">VISA</h2>
+                              <p className="text-[8px] text-zinc-400 font-bold uppercase tracking-widest">Payment App</p>
+                            </div>
                           </div>
+                          
                           <div className="space-y-4">
-                            <div className="relative group">
-                                <p className="font-mono text-2xl tracking-[0.3em] text-white/10 select-none">8820 4452 9001 7731</p>
-                                <p className="absolute inset-0 font-mono text-2xl tracking-[0.3em] text-white blur-sm group-hover:blur-none transition-all duration-500">8820 4452 9001 7731</p>
+                            <div className="flex items-center justify-between">
+                                <p className="font-mono text-xl tracking-[0.2em] text-zinc-800">4452 9001 7731 ****</p>
+                                <div className="w-8 h-8 rounded-lg bg-white p-1">
+                                    <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Logo" />
+                                </div>
                             </div>
                             <div className="flex justify-between items-end">
                                 <div className="space-y-0.5">
-                                  <p className="text-[10px] text-zinc-500 font-bold uppercase">Exp Date</p>
-                                  <p className="text-zinc-200 text-sm font-bold">05/31</p>
+                                  <p className="text-[8px] text-zinc-400 font-bold uppercase">Card Holder</p>
+                                  <p className="text-zinc-900 text-sm font-bold uppercase tracking-tight">{user.name}</p>
                                 </div>
-                                <div className="flex -space-x-3">
-                                  <div className="w-10 h-10 rounded-full bg-red-600/80 backdrop-blur-sm" />
-                                  <div className="w-10 h-10 rounded-full bg-yellow-500/80 backdrop-blur-sm" />
+                                <div className="flex items-center gap-1">
+                                    <div className="w-8 h-8 rounded-full bg-blue-600" />
+                                    <div className="w-8 h-8 rounded-full bg-yellow-400 -ml-4 opacity-80" />
                                 </div>
                             </div>
                           </div>
@@ -1534,10 +1861,10 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                 {/* Action Grid */}
                 <section className="grid grid-cols-4 gap-4 mb-10">
                     {[
-                      { icon: Send, label: 'Transfer', color: 'bg-zinc-900', action: () => setShowTransfer(true) },
+                      { icon: Send, label: 'Kirim', color: 'bg-zinc-900', action: () => setShowTransfer(true) },
                       { icon: CreditCard, label: 'Bayar', color: 'bg-zinc-900', action: () => {} },
                       { icon: Plus, label: 'Top Up', color: 'bg-zinc-900', action: () => {} },
-                      { icon: MoreHorizontal, label: 'Lainnya', color: 'bg-zinc-900', action: () => {} }
+                      { icon: ArrowUpRight, label: 'Transfer', color: 'bg-zinc-900', action: () => setShowTransfer(true) }
                     ].map((act, i) => (
                       <motion.button 
                         key={i}
@@ -1675,6 +2002,126 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
           {/* Gemini Chat FAB */}
           <GeminiChat history={history} balance={balance} />
         </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {notification && <Notification message={notification} onClose={() => setNotification(null)} />}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showScanner && (
+          <QRISFlow 
+            onClose={() => setShowScanner(false)} 
+            onTransactionComplete={handleQRISPayment}
+          />
+        )}
+        {showTransfer && (
+          <TransferFlow 
+            balance={balance}
+            onClose={() => setShowTransfer(false)}
+            onTransferComplete={handleTransferComplete}
+            categories={customCategories}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Persistence Modals */}
+      <AnimatePresence>
+        {showEditProfile && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-6">
+            <motion.div initial={{ y: 100 }} animate={{ y: 0 }} exit={{ y: 100 }} className="w-full max-w-sm bg-zinc-900 rounded-[40px] p-8 border border-zinc-800 shadow-2xl">
+               <h3 className="text-2xl font-black italic text-white mb-6">EDIT PROFILE</h3>
+               
+               <AnimatePresence mode="wait">
+                 {!otpSent ? (
+                   <motion.div 
+                     key="edit-form"
+                     initial={{ opacity: 0 }}
+                     animate={{ opacity: 1 }}
+                     exit={{ opacity: 0 }}
+                     className="space-y-4 mb-8"
+                   >
+                      <div>
+                        <label className="text-zinc-500 text-[10px] font-black uppercase mb-1 block">Full Name</label>
+                        <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} className="w-full bg-zinc-800/50 border border-zinc-800 p-4 rounded-2xl text-white outline-none focus:border-blue-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-zinc-500 text-[10px] font-black uppercase mb-1 block">Email Address</label>
+                        <input value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} className="w-full bg-zinc-800/50 border border-zinc-800 p-4 rounded-2xl text-white outline-none focus:border-blue-500 transition-colors" placeholder="user@example.com" />
+                      </div>
+                      <div>
+                        <label className="text-zinc-500 text-[10px] font-black uppercase mb-1 block">Phone Number</label>
+                        <input value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} className="w-full bg-zinc-800/50 border border-zinc-800 p-4 rounded-2xl text-white outline-none focus:border-blue-500 transition-colors" />
+                      </div>
+                      <div className="flex gap-3 pt-2">
+                        <button onClick={() => { setShowEditProfile(false); setOtpSent(false); }} className="flex-1 py-4 bg-zinc-800 rounded-2xl font-bold">Cancel</button>
+                        <button 
+                          onClick={saveProfile} 
+                          disabled={isSendingOTP}
+                          className="flex-1 py-4 bg-blue-600 rounded-2xl font-bold shadow-[0_10px_20px_rgba(37,99,235,0.4)] disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          {isSendingOTP ? <Loader2 className="w-4 h-4 animate-spin" /> : (editForm.email !== user.email ? 'Kirim Verifikasi' : 'Save')}
+                        </button>
+                      </div>
+                   </motion.div>
+                 ) : (
+                   <motion.div 
+                     key="otp-section"
+                     id="otpSection"
+                     initial={{ opacity: 0, scale: 0.9 }}
+                     animate={{ opacity: 1, scale: 1 }}
+                     exit={{ opacity: 0, scale: 0.9 }}
+                     className="space-y-6 mb-8 text-center"
+                   >
+                      <div className="w-16 h-16 bg-blue-500/10 rounded-full flex items-center justify-center mx-auto">
+                        <ShieldCheck className="text-blue-500 w-8 h-8" />
+                      </div>
+                      <div>
+                        <h4 className="text-white font-bold mb-1">Verifikasi Email Anda</h4>
+                        <p className="text-zinc-500 text-xs">Masukkan 6 digit kode yang kami kirim ke <span className="text-blue-400">{editForm.email}</span></p>
+                      </div>
+                      
+                      <input 
+                        id="otpInput"
+                        type="text" 
+                        maxLength={6}
+                        value={userOTP}
+                        onChange={e => setUserOTP(e.target.value)}
+                        placeholder="••••••"
+                        className="w-full bg-zinc-800 text-center text-4xl font-black tracking-[0.5em] py-5 rounded-3xl text-white outline-none border border-zinc-700 focus:border-blue-500 transition-all placeholder:text-zinc-700"
+                      />
+
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={handleVerifyAndSave}
+                          className="w-full py-5 bg-blue-600 rounded-3xl font-black italic tracking-tighter text-white shadow-[0_15px_30px_rgba(37,99,235,0.4)] active:scale-[0.98] transition-transform"
+                        >
+                          VERIFIKASI & SIMPAN
+                        </button>
+                        <button onClick={() => setOtpSent(false)} className="py-2 text-zinc-500 text-xs font-bold hover:text-white transition-colors">Ganti Email Salah?</button>
+                      </div>
+                   </motion.div>
+                 )}
+               </AnimatePresence>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {showLogoutConfirm && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-6">
+            <motion.div className="w-full max-w-xs bg-zinc-900 rounded-[40px] p-8 border border-zinc-800 shadow-2xl text-center">
+               <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <X className="text-red-500 w-8 h-8" />
+               </div>
+               <h3 className="text-xl font-bold text-white mb-2">Yakin ingin keluar?</h3>
+               <p className="text-zinc-500 text-sm mb-8">Data transaksi dan saldo Anda akan tetap aman tersimpan.</p>
+               <div className="flex flex-col gap-2">
+                  <button onClick={handleLogout} className="w-full py-4 bg-red-500 rounded-2xl font-bold text-white">Logout</button>
+                  <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-4 text-zinc-500 font-bold">Batal</button>
+               </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
