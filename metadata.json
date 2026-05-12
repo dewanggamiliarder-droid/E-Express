@@ -1,6 +1,6 @@
 {
-  "name": "Super Bank Express",
-  "description": "Premium 2026 AI Fintech Simulation with full QRIS payment flow, persistent IDR balance, and futuristic neon aesthetics.",
+  "name": "E-Express",
+  "description": "Premium 2026 AI Fintech Simulation - Digital Banking Redefined with E-Express. Secure, fast, and futuristic QRIS payment flow.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": []
 }

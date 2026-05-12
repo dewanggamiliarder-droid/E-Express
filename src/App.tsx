@@ -31,9 +31,14 @@ import {
   Smartphone,
   Fingerprint,
   Lock,
-  CalendarDays
+  CalendarDays,
+  Receipt
 } from 'lucide-react';
 import { GeminiChat } from './components/GeminiChat';
+import { CardManagerModal } from './components/CardManagerModal';
+import { MoreServicesModal } from './components/MoreServicesModal';
+import { NotificationsModal } from './components/NotificationsModal';
+import { SearchModal } from './components/SearchModal';
 
 import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
 import { QRCodeSVG } from 'qrcode.react';
@@ -87,6 +92,7 @@ import {
   getDoc, 
   setDoc, 
   updateDoc, 
+  deleteDoc,
   onSnapshot, 
   collection, 
   query, 
@@ -155,7 +161,7 @@ const BANK_LOGOS: { [key: string]: string } = {
   'BCA Digital': 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Bank_Central_Asia.svg/1024px-Bank_Central_Asia.svg.png',
   'Bank Mandiri': 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/Bank_Mandiri_logo_2016.svg/1024px-Bank_Mandiri_logo_2016.svg.png',
   'BNI': 'https://upload.wikimedia.org/wikipedia/id/thumb/5/55/BNI_logo.svg/1024px-BNI_logo.svg.png',
-  'Super Bank Express': 'https://i.ibb.co/LzJ6FmP1/Blue-and-Red-Modern-Logistic-Service-Logo.png'
+  'E-Express': 'https://i.ibb.co/LzJ6FmP1/Blue-and-Red-Modern-Logistic-Service-Logo.png'
 };
 
 const getBankLogo = (name: string) => {
@@ -172,6 +178,73 @@ const getBankLogo = (name: string) => {
 const generateID = () => Math.random().toString(36).substring(2, 15).toUpperCase();
 
 // --- Components ---
+
+const ConfirmationDialog = ({ 
+  isOpen, 
+  onClose, 
+  onConfirm, 
+  title, 
+  message, 
+  confirmText = "Konfirmasi", 
+  cancelText = "Batal",
+  isDanger = false,
+  icon: Icon = ShieldCheck
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  onConfirm: () => void, 
+  title: string, 
+  message: string, 
+  confirmText?: string, 
+  cancelText?: string,
+  isDanger?: boolean,
+  icon?: any
+}) => {
+  if (!isOpen) return null;
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }} 
+      animate={{ opacity: 1 }} 
+      exit={{ opacity: 0 }} 
+      className="fixed inset-0 z-[500] bg-zinc-950/80 backdrop-blur-xl flex items-center justify-center p-6"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 shadow-2xl overflow-hidden relative"
+      >
+        <div className={`absolute top-0 inset-x-0 h-1 ${isDanger ? 'bg-red-500' : 'bg-blue-500'}`} />
+        
+        <div className="flex flex-col items-center text-center">
+          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-6 ${isDanger ? 'bg-red-500/20 text-red-500' : 'bg-blue-500/20 text-blue-500'}`}>
+            <Icon size={32} />
+          </div>
+          
+          <h3 className="text-xl font-black italic tracking-tighter text-white uppercase mb-2">{title}</h3>
+          <p className="text-zinc-500 text-sm leading-relaxed mb-8">{message}</p>
+          
+          <div className="w-full space-y-3">
+            <button 
+              onClick={() => {
+                onConfirm();
+                onClose();
+              }}
+              className={`w-full py-4 rounded-2xl font-bold text-white transition-all active:scale-95 ${isDanger ? 'bg-red-600 shadow-[0_10px_30px_rgba(220,38,38,0.3)]' : 'bg-blue-600 shadow-[0_10px_30px_rgba(37,99,235,0.3)]'}`}
+            >
+              {confirmText}
+            </button>
+            <button 
+              onClick={onClose}
+              className="w-full py-4 bg-zinc-800 rounded-2xl text-zinc-400 font-bold hover:text-white transition-colors"
+            >
+              {cancelText}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
 
 const Notification = ({ message, onClose }: { message: string, onClose: () => void }) => (
   <motion.div 
@@ -208,7 +281,7 @@ const SplashScreen = ({ onComplete }: { onComplete: () => void, key?: string }) 
         transition={{ duration: 1, type: "spring", stiffness: 100 }}
       >
         <div className="w-32 h-32 bg-white rounded-[2rem] flex items-center justify-center shadow-[0_0_60px_rgba(37,99,235,0.4)] p-4">
-          <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Super Bank Logo" />
+          <img src={BANK_LOGOS['E-Express']} className="w-full h-full object-contain" alt="E-Express Logo" />
         </div>
       </motion.div>
 
@@ -219,7 +292,7 @@ const SplashScreen = ({ onComplete }: { onComplete: () => void, key?: string }) 
         transition={{ delay: 0.3 }}
       >
         <h1 className="text-5xl font-black text-white italic tracking-tighter uppercase">
-          SUPER <br/> <span className="text-blue-500">BANK</span>
+          E <span className="text-blue-500">EXPRESS</span>
         </h1>
       </motion.div>
 
@@ -288,8 +361,8 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
   const handleScanSuccess = (decodedText: string) => {
     try {
       const data = JSON.parse(decodedText);
-      if (data.type === 'SUPER_BANK_RECEIVE') {
-        setMerchant(data.name || 'User Super Bank');
+      if (data.type === 'E_EXPRESS_RECEIVE') {
+        setMerchant(data.name || 'User E-Express');
         setRecipientUid(data.uid);
       } else {
         setMerchant(decodedText);
@@ -503,7 +576,7 @@ const QRISFlow = ({ onTransactionComplete, onClose }: { onTransactionComplete: (
              <div className="text-center">
                 <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase mb-3">AI Processing</h2>
                 <p className="text-zinc-500 text-xs uppercase font-bold tracking-widest leading-relaxed">
-                  Securing neural transaction through <br/> Super Bank Quantum Gateway...
+                  Securing neural transaction through <br/> E-Express Quantum Gateway...
                 </p>
              </div>
           </motion.div>
@@ -597,7 +670,7 @@ const HandHoldingPhone = () => {
           {/* Internal Screen */}
           <div className="w-full h-full bg-white flex flex-col items-center justify-center p-6 gap-4">
              <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center p-2">
-                <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Logo" />
+                <img src={BANK_LOGOS['E-Express']} className="w-full h-full object-contain" alt="Logo" />
              </div>
              <div className="space-y-1.5 text-center">
                 <div className="h-2 w-16 bg-zinc-100 rounded-full mx-auto" />
@@ -627,44 +700,29 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
   const handleGoogleLogin = async () => {
-    // Determine if we are in an environment that blocks redirects (like AI Studio iframe)
-    const isInIframe = window.self !== window.top;
+    console.log("Button 'Continue with Google' clicked");
     
-    if (isInIframe) {
-      alert("Fitur login Google tidak didukung di dalam frame pratinjau ini.\n\nSilakan klik tombol 'Open in new tab' di pojok kanan atas aplikasi Anda untuk masuk.");
+    if (isAuthenticating) {
+      console.warn("Authentication already in progress...");
       return;
     }
-
-    if (isAuthenticating) return;
-
+    
     setIsAuthenticating(true);
-    try {
-        console.log("Initiating Google Login Redirect...");
-        
-        // Ensure standard persistence first
-        try {
-          await setPersistence(auth, browserLocalPersistence);
-        } catch (pErr) {
-          console.warn("Persistence set failed, continuing anyway", pErr);
-        }
 
-        await signInWithRedirect(auth, googleProvider);
-        // After redirecting, the browser leaves the page
+    try {
+        console.log("Initiating Google Login (Popup)...");
+        // Ensure persistence is set before redirect - critical for mobile
+        await setPersistence(auth, browserLocalPersistence);
+        console.log("Persistence set to local. Opening Google popup...");
+        await signInWithPopup(auth, googleProvider);
     } catch (error: any) {
-        console.error("Auth Exception:", error);
+        console.error("Firebase Auth Error:", error);
         setIsAuthenticating(false);
-        
-        let errorMsg = error.message || "Terjadi kesalahan saat memulai login.";
-        
-        if (error.code === 'auth/unauthorized-domain' || error.message?.includes('unauthorized')) {
-          errorMsg = `DOMAIN TIDAK TERDAFTAR!\n\n` +
-                     `Host '${window.location.hostname}' belum terdaftar di Firebase Authorized Domains.\n\n` +
-                     `Harap tambahkan domain ini di Firebase Console Anda.`;
-        } else if (error.code === 'auth/network-request-failed') {
-          errorMsg = "Koneksi terputus. Harap cek internet Anda.";
+        if (error.code === 'auth/popup-blocked') {
+           alert("Popup diblokir oleh browser. Harap izinkan popup untuk website ini.");
+        } else {
+           alert(`Gagal Login: ${error.message || 'Kesalahan Sistem'}`);
         }
-        
-        alert(errorMsg);
     }
   };
 
@@ -687,9 +745,9 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
           className="text-center mb-10"
         >
           <h2 className="text-4xl font-black italic tracking-tighter text-white uppercase mb-2">
-              SUPER <span className="text-blue-500">BANK</span>
+              E <span className="text-blue-500">EXPRESS</span>
           </h2>
-          <p className="text-zinc-500 text-xs font-black uppercase tracking-[0.3em]">Digital Banking Redefined</p>
+          <p className="text-zinc-500 text-xs font-black uppercase tracking-[0.3em]">Premium Digital Banking</p>
         </motion.div>
       </div>
 
@@ -700,7 +758,10 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
             className="w-full py-5 bg-white rounded-3xl text-zinc-950 font-black flex items-center justify-center gap-3 shadow-[0_20px_40px_rgba(255,255,255,0.1)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
         >
             {isAuthenticating ? (
-                <Loader2 className="animate-spin" />
+                <div className="flex items-center gap-2">
+                  <Loader2 className="animate-spin w-5 h-5" />
+                  <span>Authenticating...</span>
+                </div>
             ) : (
                 <>
                     <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -715,14 +776,8 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
         </button>
         
         <p className="text-center text-zinc-500 text-[9px] font-black uppercase tracking-[0.2em] opacity-40 pt-2">
-            Licensed & Monitored by AI-Banking Authority
+            Licensed & Monitored by Global Banking Integrity
         </p>
-        
-        <div className="mt-8 flex justify-center">
-          <a href="https://ibb.co.com/SD6Z1dmD" target="_blank" rel="noopener noreferrer">
-            <img src="https://i.ibb.co/0pnzWF9p/tugas-OJK1-1.jpg" alt="tugas-OJK1-1" border="0" className="w-[100px] rounded-lg opacity-30 hover:opacity-100 transition-opacity" />
-          </a>
-        </div>
       </div>
     </motion.div>
   );
@@ -730,7 +785,7 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void, key?: string }) => {
 
 const ReceiveQRModal = ({ user, onClose }: { user: any, onClose: () => void }) => {
   const qrData = JSON.stringify({
-    type: 'SUPER_BANK_RECEIVE',
+    type: 'E_EXPRESS_RECEIVE',
     uid: user.uid,
     name: user.name,
     accountId: user.accountId
@@ -753,7 +808,7 @@ const ReceiveQRModal = ({ user, onClose }: { user: any, onClose: () => void }) =
           <div className="absolute top-0 inset-x-0 h-[200px] bg-gradient-to-b from-blue-500/10 to-transparent pointer-events-none" />
           
           <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mb-10 shadow-2xl relative z-10 p-2">
-             <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Logo" />
+             <img src={BANK_LOGOS['E-Express']} className="w-full h-full object-contain" alt="Logo" />
           </div>
           
           <div className="relative z-10 mb-8 p-6 bg-white rounded-[2.5rem] shadow-[0_30px_60px_rgba(0,0,0,0.5)]">
@@ -768,7 +823,7 @@ const ReceiveQRModal = ({ user, onClose }: { user: any, onClose: () => void }) =
                level="H"
                includeMargin={false}
                imageSettings={{
-                 src: BANK_LOGOS['Super Bank Express'],
+                 src: BANK_LOGOS['E-Express'],
                  x: undefined,
                  y: undefined,
                  height: 48,
@@ -793,7 +848,7 @@ const ReceiveQRModal = ({ user, onClose }: { user: any, onClose: () => void }) =
 
         <div className="mt-8 flex flex-col items-center">
            <p className="text-zinc-600 text-[10px] uppercase font-black tracking-[0.4em] mb-10 text-center">
-              Scan with another <br/> Super Bank app
+              Scan with another <br/> E-Express app
            </p>
            
            <button 
@@ -849,15 +904,36 @@ export default function App() {
 
 function MainApp({ isOffline }: { isOffline: boolean }) {
   const [loading, setLoading] = useState(true);
+  const [confirmation, setConfirmation] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    isDanger?: boolean;
+    icon?: any;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
+  const confirmAction = (config: any) => {
+    setConfirmation({ ...config, isOpen: true });
+  };
   const [activeView, setActiveView] = useState<View>('HOME');
   const [notification, setNotification] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [showReceive, setShowReceive] = useState(false);
+  const [showCardManager, setShowCardManager] = useState(false);
+  const [showMoreServices, setShowMoreServices] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
   
   // Modals
   const [showEditProfile, setShowEditProfile] = useState(false);
-  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isLoggedOut, setIsLoggedOut] = useState(false);
   
   // Auth & Firebase State
@@ -915,52 +991,7 @@ function MainApp({ isOffline }: { isOffline: boolean }) {
       setNotification(`SYSTEM: Konfigurasi Firebase tidak lengkap (${missing.join(', ')})`);
     }
 
-    const handleRedirect = async () => {
-      // Don't show heavy global loader immediately for every reload
-      // only if we detect a likely redirect flow
-      const isLikelyRedirect = window.location.search.includes('code=') || 
-                               window.location.search.includes('state=') || 
-                               window.localStorage.getItem('firebase:previous_auth_op');
-      
-      if (isLikelyRedirect) {
-        setLoading(true);
-      }
-
-      // Safety timer: stop loading if stuck
-      const loadingTimer = setTimeout(() => {
-        setLoading(false);
-      }, 7000);
-
-      try {
-        console.log("Checking for Google redirect results...");
-        const result = await getRedirectResult(auth);
-        
-        if (result?.user) {
-          console.log("Login successful via Redirect:", result.user.email);
-        } else {
-          // If no result and no user, we can safely stop loading
-          if (!auth.currentUser) {
-            setLoading(false);
-          }
-        }
-      } catch (err: any) {
-        console.error("Redirect Flow Error Detail:", err);
-        setLoading(false);
-        
-        if (err.code === 'auth/web-storage-unsupported') {
-           alert("Storage browser tidak dapat diakses. Harap gunakan Chrome versi terbaru dan nonaktifkan 'Block third-party cookies'.");
-        } else if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized')) {
-           alert("DOMAIN BELUM TERDAFTAR:\nHarap tambahkan '" + window.location.hostname + "' ke 'Authorized Domains' di Firebase Console.");
-        } else if (err.message?.includes('initial state is missing')) {
-           console.warn("Status session tidak ditemukan. Menunggu Auth Observer...");
-        } else {
-           setNotification(`Gagal Login: ${err.message}`);
-        }
-      } finally {
-        clearTimeout(loadingTimer);
-      }
-    };
-    handleRedirect();
+    setLoading(true);
 
     const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
       setFirebaseUser(fUser);
@@ -982,12 +1013,13 @@ function MainApp({ isOffline }: { isOffline: boolean }) {
         // Ensure Profile exists in Firestore
         const ensureProfile = async (retries = 3) => {
           try {
+            console.log("Ensuring Firestore profile for UID:", fUser.uid);
             const userDocRef = doc(db, 'users', fUser.uid);
             const userSnap = await getDoc(userDocRef);
             
             if (!userSnap.exists()) {
               console.log("Initializing dynamic profile for first-time session...");
-              const newAccountId = 'SB-' + Math.floor(10000000 + Math.random() * 90000000);
+              const newAccountId = 'EX-' + Math.floor(10000000 + Math.random() * 90000000);
               
               await setDoc(userDocRef, {
                   uid: fUser.uid,
@@ -1005,7 +1037,12 @@ function MainApp({ isOffline }: { isOffline: boolean }) {
               console.log("New profile created successfully.");
             } else {
               // Update last login
-              await updateDoc(userDocRef, { lastLogin: serverTimestamp() });
+              try {
+                await updateDoc(userDocRef, { lastLogin: serverTimestamp() });
+              } catch (e) {
+                console.warn("Last login update failed (probably offline)", e);
+              }
+              
               // Sync state from firestore
               const data = userSnap.data();
               if (data) {
@@ -1025,8 +1062,8 @@ function MainApp({ isOffline }: { isOffline: boolean }) {
             if (err.message.includes('offline') && retries > 0) {
               setTimeout(() => ensureProfile(retries - 1), 2000);
             } else {
-              setNotification("Sinkronisasi profil gagal. Menggunakan data lokal.");
-              setIsAuthenticated(true); // Allow limited session
+              setNotification("Mode Offline: Menggunakan data lokal.");
+              setIsAuthenticated(true); 
               setLoading(false);
             }
           }
@@ -1246,93 +1283,110 @@ function MainApp({ isOffline }: { isOffline: boolean }) {
 
   const handleTransferComplete = async (recipient: string, amount: number, method: string, category: string = 'Other', accountNo?: string) => {
     if (!firebaseUser) return;
-    try {
-        const dateStr = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-        const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 
-        // 1. Check if recipient is a Super Bank account
-        const isSuperBank = accountNo?.startsWith('SB-');
-        
-        let recipientUid = null;
-        let recipientData = null;
+    const executeTransfer = async () => {
+      try {
+          const dateStr = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+          const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 
-        if (isSuperBank) {
-            const usersRef = collection(db, 'users');
-            const q = query(usersRef, where('accountId', '==', accountNo), limit(1));
-            const querySnap = await getDocs(q);
-            
-            if (!querySnap.empty) {
-                recipientUid = querySnap.docs[0].id;
-                recipientData = querySnap.docs[0].data();
-            }
-        }
+          // 1. Check if recipient is an E-Express account
+          const isSuperBank = accountNo?.startsWith('EX-');
+          
+          let recipientUid = null;
+          let recipientData = null;
 
-        const senderRef = doc(db, 'users', firebaseUser.uid);
-        const senderTransRef = doc(collection(db, 'users', firebaseUser.uid, 'transactions'));
+          if (isSuperBank) {
+              const usersRef = collection(db, 'users');
+              const q = query(usersRef, where('accountId', '==', accountNo), limit(1));
+              const querySnap = await getDocs(q);
+              
+              if (!querySnap.empty) {
+                  recipientUid = querySnap.docs[0].id;
+                  recipientData = querySnap.docs[0].data();
+              }
+          }
 
-        await runTransaction(db, async (transaction) => {
-            // 1. ALL READS FIRST
-            const senderSnap = await transaction.get(senderRef);
-            let receiverSnap = null;
-            if (recipientUid) {
-                const receiverRef = doc(db, 'users', recipientUid);
-                receiverSnap = await transaction.get(receiverRef);
-            }
+          const senderRef = doc(db, 'users', firebaseUser.uid);
+          const senderTransRef = doc(collection(db, 'users', firebaseUser.uid, 'transactions'));
 
-            // 2. VALIDATIONS
-            if (!senderSnap.exists()) throw new Error("Data user error");
-            
-            const newSenderBal = senderSnap.data().balance - amount;
-            if (newSenderBal < 0) throw new Error("Saldo anda tidak cukup");
+          await runTransaction(db, async (transaction) => {
+              // 1. ALL READS FIRST
+              const senderSnap = await transaction.get(senderRef);
+              let receiverSnap = null;
+              if (recipientUid) {
+                  const receiverRef = doc(db, 'users', recipientUid);
+                  receiverSnap = await transaction.get(receiverRef);
+              }
 
-            // 3. ALL WRITES AFTER
-            transaction.update(senderRef, { balance: newSenderBal });
+              // 2. VALIDATIONS
+              if (!senderSnap.exists()) throw new Error("Data user error");
+              
+              const newSenderBal = senderSnap.data().balance - amount;
+              if (newSenderBal < 0) throw new Error("Saldo anda tidak cukup");
 
-            transaction.set(senderTransRef, {
-                id: senderTransRef.id,
-                name: `Transfer ke ${recipientData ? recipientData.name : recipient} (${accountNo})`,
-                type: 'Transfer',
-                category: category,
-                amount: amount,
-                date: dateStr,
-                time: timeStr,
-                isPositive: false,
-                status: 'BERHASIL',
-                method: method,
-                senderUid: firebaseUser.uid,
-                recipientUid: recipientUid || 'EXTERNAL',
-                createdAt: serverTimestamp()
-            });
+              // 3. ALL WRITES AFTER
+              transaction.update(senderRef, { balance: newSenderBal });
 
-            if (recipientUid && receiverSnap?.exists()) {
-                const receiverRef = doc(db, 'users', recipientUid);
-                const receiverTransRef = doc(collection(db, 'users', recipientUid, 'transactions'));
-                
-                const newReceiverBal = (receiverSnap.data().balance || 0) + amount;
-                transaction.update(receiverRef, { balance: newReceiverBal });
-                
-                transaction.set(receiverTransRef, {
-                    id: receiverTransRef.id,
-                    name: `Transfer dari ${user.name}`,
-                    type: 'Transfer',
-                    category: category,
-                    amount: amount,
-                    date: dateStr,
-                    time: timeStr,
-                    isPositive: true,
-                    status: 'BERHASIL',
-                    method: method,
-                    senderUid: firebaseUser.uid,
-                    recipientUid: recipientUid,
-                    createdAt: serverTimestamp()
-                });
-            }
-        });
+              transaction.set(senderTransRef, {
+                  id: senderTransRef.id,
+                  name: `Transfer ke ${recipientData ? recipientData.name : recipient} (${accountNo})`,
+                  type: 'Transfer',
+                  category: category,
+                  amount: amount,
+                  date: dateStr,
+                  time: timeStr,
+                  isPositive: false,
+                  status: 'BERHASIL',
+                  method: method,
+                  senderUid: firebaseUser.uid,
+                  recipientUid: recipientUid || 'EXTERNAL',
+                  createdAt: serverTimestamp()
+              });
 
-        setNotification(`Transfer ke ${recipientData ? recipientData.name : recipient} (${accountNo}) Berhasil.`);
-    } catch (err) {
-        console.error("Transfer Error:", err);
-        setNotification("Gagal memproses transfer. Silakan cek saldo atau nomor rekening.");
+              if (recipientUid && receiverSnap?.exists()) {
+                  const receiverRef = doc(db, 'users', recipientUid);
+                  const receiverTransRef = doc(collection(db, 'users', recipientUid, 'transactions'));
+                  
+                  const newReceiverBal = (receiverSnap.data().balance || 0) + amount;
+                  transaction.update(receiverRef, { balance: newReceiverBal });
+                  
+                  transaction.set(receiverTransRef, {
+                      id: receiverTransRef.id,
+                      name: `Transfer dari ${user.name}`,
+                      type: 'Transfer',
+                      category: category,
+                      amount: amount,
+                      date: dateStr,
+                      time: timeStr,
+                      isPositive: true,
+                      status: 'BERHASIL',
+                      method: method,
+                      senderUid: firebaseUser.uid,
+                      recipientUid: recipientUid,
+                      createdAt: serverTimestamp()
+                  });
+              }
+          });
+
+          setNotification(`Transfer ke ${recipientData ? recipientData.name : recipient} (${accountNo}) Berhasil.`);
+      } catch (err) {
+          console.error("Transfer Error:", err);
+          setNotification("Gagal memproses transfer. Silakan cek saldo atau nomor rekening.");
+      }
+    };
+
+    // Critical Action Confirmation for Large Transfers (> 2,000,000 IDR)
+    if (amount >= 2000000) {
+      confirmAction({
+        title: "Konfirmasi Transfer Besar",
+        message: `Anda akan melakukan transfer sebesar ${formatIDR(amount)} ke ${recipient}. Harap pastikan nomor rekening dan penerima sudah benar.`,
+        isDanger: false,
+        icon: ShieldCheck,
+        confirmText: "Ya, Kirim Sekarang",
+        onConfirm: executeTransfer
+      });
+    } else {
+      executeTransfer();
     }
   };
 
@@ -1417,32 +1471,52 @@ function MainApp({ isOffline }: { isOffline: boolean }) {
     }
   };
 
-  const handleLogout = async () => {
-    setIsLoggedOut(true);
-    setLoading(true);
+  const handleDeleteTransaction = async (trxId: string) => {
+    if (!firebaseUser) return;
     try {
-        await signOut(auth);
-        setTimeout(() => {
-          setLoading(false);
-          setIsLoggedOut(false);
-          setIsAuthenticated(false);
-          setFirebaseUser(null);
-          setUser({
-            name: 'Alex Sterling',
-            email: 'alex.sterling@expres.ai',
-            phone: '+62 812 3456 7890',
-            avatar: null,
-            accountId: 'ID-' + Math.floor(100000 + Math.random() * 900000),
-          });
-          setBalance(0);
-          setHistory([]);
-          setActiveView('HOME');
-          setShowLogoutConfirm(false);
-        }, 1500);
-    } catch (e) {
-        console.error("Logout error", e);
-        setLoading(false);
+      const trxRef = doc(db, 'users', firebaseUser.uid, 'transactions', trxId);
+      await deleteDoc(trxRef);
+      setNotification("Transaksi berhasil dihapus dari riwayat.");
+      setSelectedTransaction(null);
+    } catch (err) {
+      console.error("Delete Error:", err);
+      setNotification("Gagal menghapus transaksi.");
     }
+  };
+
+  const handleLogout = async () => {
+    confirmAction({
+      title: "Konfirmasi Logout",
+      message: "Apakah Anda yakin ingin keluar dari akun E-Express? Sesi Anda akan dihentikan.",
+      isDanger: true,
+      icon: Lock,
+      onConfirm: async () => {
+        setIsLoggedOut(true);
+        setLoading(true);
+        try {
+            await signOut(auth);
+            setTimeout(() => {
+              setLoading(false);
+              setIsLoggedOut(false);
+              setIsAuthenticated(false);
+              setFirebaseUser(null);
+              setUser({
+                name: 'Alex Sterling',
+                email: 'alex.sterling@expres.ai',
+                phone: '+62 812 3456 7890',
+                avatar: null,
+                accountId: 'EX-' + Math.floor(10000000 + Math.random() * 90000000),
+              });
+              setBalance(0);
+              setHistory([]);
+              setActiveView('HOME');
+            }, 1500);
+        } catch (e) {
+            console.error("Logout error", e);
+            setLoading(false);
+        }
+      }
+    });
   };
 
   // --- Sub-components for History ---
@@ -1470,8 +1544,8 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
         (decodedText) => {
           try {
             const data = JSON.parse(decodedText);
-            if (data.type === 'SUPER_BANK_RECEIVE') {
-              setBank('Super Bank Express');
+            if (data.type === 'E_EXPRESS_RECEIVE') {
+              setBank('E-Express');
               setAccountNo(data.accountId);
               setRecipientName(data.name);
               setIsScanning(false);
@@ -1504,11 +1578,11 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
         try {
             let finalAccNo = accountNo.trim().toUpperCase();
             
-            // For now, only Super Bank accounts are validated against Firestore
-            if (bank === 'Super Bank Express') {
-                // Automatically add SB- prefix if missing
-                if (!finalAccNo.startsWith('SB-')) {
-                    finalAccNo = 'SB-' + finalAccNo;
+            // For now, only E-Express accounts are validated against Firestore
+            if (bank === 'E-Express') {
+                // Automatically add EX- prefix if missing
+                if (!finalAccNo.startsWith('EX-')) {
+                    finalAccNo = 'EX-' + finalAccNo;
                 }
 
                 const usersRef = collection(db, 'users');
@@ -1516,7 +1590,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                 const querySnap = await getDocs(q);
                 
                 if (querySnap.empty) {
-                    alert(`Nomor rekening ${finalAccNo} tidak ditemukan di Super Bank.`);
+                    alert(`Nomor rekening ${finalAccNo} tidak ditemukan di E-Express.`);
                 } else if (querySnap.docs[0].id === (firebaseUser?.uid || '')) {
                     alert("Anda tidak dapat mentransfer ke diri sendiri.");
                 } else {
@@ -1592,7 +1666,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                   <div className="flex gap-2">
                     <input 
                       type="text" 
-                      placeholder="Contoh: SB-12345678"
+                      placeholder="Contoh: EX-12345678"
                       value={accountNo}
                       onChange={(e) => setAccountNo(e.target.value.toUpperCase())}
                       className="flex-1 bg-zinc-900 border border-zinc-800 p-5 rounded-3xl text-white outline-none focus:border-blue-500/50 placeholder:text-zinc-800 uppercase"
@@ -1675,8 +1749,8 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                      onChange={(e) => setCategory(e.target.value)}
                      className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-3xl text-white outline-none focus:border-blue-500/50 appearance-none"
                    >
-                     {categories.map(cat => (
-                       <option key={cat} value={cat}>{cat}</option>
+                     {categories.map((cat, index) => (
+                       <option key={`${cat}-${index}`} value={cat}>{cat}</option>
                      ))}
                    </select>
                 </div>
@@ -1856,9 +1930,9 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
            
            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
               <p className="text-zinc-600 text-[8px] font-black uppercase self-center mr-2">Categories:</p>
-              {['Semua', ...categories].map((f) => (
+              {['Semua', ...categories].map((f, i) => (
                 <button 
-                  key={f}
+                  key={`${f}-${i}`}
                   onClick={() => setActiveFilter(f)}
                   className={`whitespace-nowrap px-5 py-2 rounded-full text-[9px] font-black uppercase tracking-wider transition-all ${activeFilter === f ? 'bg-blue-600 text-white shadow-[0_5px_15px_rgba(37,99,235,0.4)]' : 'bg-zinc-900/50 text-zinc-500 border border-zinc-800'}`}
                 >
@@ -1889,9 +1963,9 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
 
            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
               <p className="text-zinc-600 text-[8px] font-black uppercase self-center mr-2">Quick Filters:</p>
-              {['Uang Masuk', 'Pengeluaran', 'QRIS', 'Transfer', 'Top Up'].map((f) => (
+              {['Uang Masuk', 'Pengeluaran', 'QRIS', 'Transfer', 'Top Up'].map((f, i) => (
                 <button 
-                  key={f}
+                  key={`${f}-${i}`}
                   onClick={() => setActiveFilter(f)}
                   className={`whitespace-nowrap px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${activeFilter === f ? 'bg-blue-600 text-white shadow-[0_5px_15px_rgba(37,99,235,0.4)]' : 'bg-zinc-900 text-zinc-500 border border-zinc-800'}`}
                 >
@@ -1903,9 +1977,9 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
 
         {/* List */}
         <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-           {filteredHistory.length > 0 ? filteredHistory.map((trx) => (
+           {filteredHistory.length > 0 ? filteredHistory.map((trx, index) => (
               <motion.button 
-                key={trx.id}
+                key={`${trx.id || ''}-${index}`}
                 onClick={() => setSelectedTransaction(trx)}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
@@ -1940,9 +2014,43 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                 </div>
               </motion.button>
            )) : (
-             <div className="flex flex-col items-center justify-center py-20 opacity-30">
-                <Search className="w-12 h-12 mb-4" />
-                <p className="font-bold text-sm">Tidak ada transaksi ditemukan</p>
+             <div className="flex flex-col items-center justify-center py-16 px-6 text-center animate-in fade-in duration-300">
+                 {history.length === 0 ? (
+                    <>
+                       <div className="w-24 h-24 bg-blue-500/10 rounded-full flex items-center justify-center mb-6 border border-blue-500/20">
+                          <Receipt className="w-12 h-12 text-blue-500" />
+                       </div>
+                       <h3 className="text-white font-bold text-lg mb-2">Belum Ada Transaksi</h3>
+                       <p className="text-zinc-500 text-sm mb-8 leading-relaxed max-w-[250px]">
+                           Anda belum memiliki riwayat transaksi. Mari mulai transaksi pertama Anda sekarang!
+                       </p>
+                       <button 
+                           onClick={() => setShowTransfer(true)}
+                           className="bg-blue-600 text-white px-8 py-3 rounded-full font-bold shadow-[0_5px_20px_rgba(37,99,235,0.4)] hover:bg-blue-500 active:scale-95 transition-all flex items-center gap-2"
+                       >
+                           Mulai Transfer <ArrowUpRight className="w-4 h-4" />
+                       </button>
+                    </>
+                 ) : (
+                    <>
+                       <div className="w-24 h-24 bg-zinc-900 rounded-full flex items-center justify-center mb-6 border border-zinc-800">
+                          <Search className="w-12 h-12 text-zinc-500" />
+                       </div>
+                       <h3 className="text-white font-bold text-lg mb-2">Tidak Ditemukan</h3>
+                       <p className="text-zinc-500 text-sm mb-8 leading-relaxed max-w-[250px]">
+                           Tidak ada transaksi yang sesuai dengan kriteria filter atau pencarian Anda.
+                       </p>
+                       <button 
+                           onClick={() => {
+                               setSearchTerm('');
+                               setActiveFilter('Semua');
+                           }}
+                           className="bg-zinc-800 text-white px-8 py-3 rounded-full font-bold border border-zinc-700 hover:bg-zinc-700 active:scale-95 transition-all"
+                       >
+                           Hapus Filter
+                       </button>
+                    </>
+                 )}
              </div>
            )}
         </div>
@@ -2002,12 +2110,30 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
            </div>
         </div>
 
-        <button 
-          onClick={onClose}
-          className="w-full py-5 bg-zinc-950 border border-zinc-800 rounded-3xl text-white font-bold hover:bg-zinc-800 transition-colors"
-        >
-          Tutup Detail
-        </button>
+        <div className="space-y-3">
+          <button 
+            onClick={onClose}
+            className="w-full py-5 bg-zinc-950 border border-zinc-800 rounded-3xl text-white font-bold hover:bg-zinc-800 transition-colors"
+          >
+            Tutup Detail
+          </button>
+          
+          <button 
+            onClick={() => {
+              confirmAction({
+                title: "Hapus Transaksi",
+                message: "Apakah Anda yakin ingin menghapus transaksi ini dari riwayat? Tindakan ini tidak dapat dibatalkan.",
+                isDanger: true,
+                icon: History,
+                confirmText: "Ya, Hapus",
+                onConfirm: () => handleDeleteTransaction(trx.id)
+              });
+            }}
+            className="w-full py-3 text-red-500/50 hover:text-red-500 text-[10px] font-black uppercase tracking-widest transition-colors"
+          >
+            Hapus dari Riwayat
+          </button>
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -2116,7 +2242,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                      <div className="relative z-10 flex justify-between">
                          <p className="font-bold">Virtual Card</p>
                          <div className="w-8 h-8 rounded-lg bg-white p-1">
-                             <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Logo" />
+                             <img src={BANK_LOGOS['E-Express']} className="w-full h-full object-contain" alt="Logo" />
                          </div>
                      </div>
                      <p className="relative z-10 font-mono text-xl tracking-widest mt-4">**** **** **** 9482</p>
@@ -2232,6 +2358,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                  <p className="text-blue-600 font-black text-xs italic tracking-tighter">VISA PAYMENT v2.1</p>
               </div>
               <motion.button 
+                onClick={() => setNotification("Aplikasi Anda sudah di versi terbaru")}
                 whileHover={{ scale: 1.1 }}
                 className="bg-blue-600 text-white text-[8px] font-black uppercase px-4 py-2 rounded-full shadow-lg shadow-blue-500/20"
               >
@@ -2252,12 +2379,12 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                     </div>
                     <ChevronRight className="text-zinc-700 group-hover:text-blue-500 transition-colors" />
                  </button>
-                 <button className="w-full flex items-center justify-between p-5 bg-zinc-900/30 border border-white/5 rounded-3xl hover:bg-zinc-900/60 transition-colors group">
+                 <button onClick={() => setNotification("Pengaturan akun sedang dalam pemeliharaan")} className="w-full flex items-center justify-between p-5 bg-zinc-900/30 border border-white/5 rounded-3xl hover:bg-zinc-900/60 transition-colors group">
                     <div className="flex items-center gap-4">
                        <Smartphone className="text-zinc-500 w-5 h-5" />
                        <span className="text-white font-bold">Account Settings</span>
                     </div>
-                    <ChevronRight className="text-zinc-700" />
+                    <ChevronRight className="text-zinc-700 group-hover:text-white transition-colors" />
                  </button>
               </div>
            </div>
@@ -2281,7 +2408,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                        />
                      </div>
                   </button>
-                  <button className="w-full flex items-center justify-between p-5 bg-zinc-900/30 border border-white/5 rounded-3xl hover:bg-zinc-900/60 transition-colors group">
+                  <button onClick={() => setNotification("Mode Perlindungan AI tidak dapat dimatikan. Sistem ini selalu aktif untuk keamanan Anda.")} className="w-full flex items-center justify-between p-5 bg-zinc-900/30 border border-white/5 rounded-3xl hover:bg-zinc-900/60 transition-colors group">
                      <div className="flex items-center gap-4">
                         <ShieldCheck className="text-emerald-500 w-5 h-5" />
                         <span className="text-white font-bold">AI Protection Mode</span>
@@ -2291,7 +2418,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                </div>
             </div>
 
-           <button onClick={() => setShowLogoutConfirm(true)} className="w-full flex items-center justify-center gap-3 p-5 bg-red-500/10 border border-red-500/20 rounded-3xl active:scale-[0.98] transition-transform">
+           <button onClick={handleLogout} className="w-full flex items-center justify-center gap-3 p-5 bg-red-500/10 border border-red-500/20 rounded-3xl active:scale-[0.98] transition-transform">
               <X className="text-red-500 w-5 h-5" />
               <span className="text-red-500 font-bold">Logout Securely</span>
            </button>
@@ -2344,11 +2471,13 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                 </div>
              </div>
              <div className="flex gap-2">
-                <div className="w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center text-zinc-400"><Search className="w-5 h-5" /></div>
-                <div className="relative w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center text-zinc-400">
+                <button onClick={() => setShowSearch(true)} className="w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+                   <Search className="w-5 h-5" />
+                </button>
+                <button onClick={() => setShowNotifications(true)} className="relative w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
                    <Bell className="w-5 h-5" />
                    <span className="absolute top-3.5 right-3.5 w-2 h-2 bg-blue-500 rounded-full border-2 border-zinc-950" />
-                </div>
+                </button>
              </div>
           </header>
 
@@ -2388,7 +2517,8 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
 
                     {/* Digital ATM Card */}
                     <motion.div 
-                      className="relative h-56 bg-white rounded-[32px] p-8 overflow-hidden shadow-[0_20px_50px_rgba(37,99,235,0.2)] group active:scale-[0.98] transition-transform border border-zinc-100"
+                      onClick={() => setShowCardManager(true)}
+                      className="relative h-56 bg-white rounded-[32px] p-8 overflow-hidden shadow-[0_20px_50px_rgba(37,99,235,0.2)] group active:scale-[0.98] transition-transform border border-zinc-100 cursor-pointer"
                     >
                       {/* Graphics from the mockup */}
                       <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/5 rounded-full blur-[40px] -translate-y-1/2 translate-x-1/3" />
@@ -2400,7 +2530,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                                 <p className="text-blue-600 text-[10px] font-black uppercase tracking-[0.3em]">VISA PLATINUM</p>
                                 <div className="flex items-center gap-2">
                                   <div className="w-8 h-6 bg-white rounded-md flex items-center justify-center p-0.5">
-                                    <img src={BANK_LOGOS['Super Bank Express']} className="max-w-full max-h-full object-contain" alt="Logo" />
+                                    <img src={BANK_LOGOS['E-Express']} className="max-w-full max-h-full object-contain" alt="Logo" />
                                   </div>
                                   <span className="text-[10px] text-zinc-400 font-bold uppercase">Digital Priority</span>
                                 </div>
@@ -2415,7 +2545,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                             <div className="flex items-center justify-between">
                                 <p className="font-mono text-xl tracking-[0.2em] text-zinc-800">4452 9001 7731 ****</p>
                                 <div className="w-8 h-8 rounded-lg bg-white p-1">
-                                    <img src={BANK_LOGOS['Super Bank Express']} className="w-full h-full object-contain" alt="Logo" />
+                                    <img src={BANK_LOGOS['E-Express']} className="w-full h-full object-contain" alt="Logo" />
                                 </div>
                             </div>
                             <div className="flex justify-between items-end">
@@ -2438,8 +2568,8 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                     {[
                       { icon: ArrowUpRight, label: 'Kirim', color: 'bg-white/5', action: () => setShowTransfer(true) },
                       { icon: ArrowDownLeft, label: 'Terima', color: 'bg-white/5', action: () => setShowReceive(true) },
-                      { icon: CreditCard, label: 'Card', color: 'bg-white/5', action: () => {} },
-                      { icon: MoreHorizontal, label: 'Lainnya', color: 'bg-white/5', action: () => {} }
+                      { icon: CreditCard, label: 'Card', color: 'bg-white/5', action: () => setShowCardManager(true) },
+                      { icon: MoreHorizontal, label: 'Lainnya', color: 'bg-white/5', action: () => setShowMoreServices(true) }
                     ].map((act, i) => (
                       <motion.button 
                         key={i}
@@ -2564,7 +2694,7 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
                  <ShieldCheck className="text-blue-500 w-12 h-12" />
               </div>
               <h2 className="text-white font-bold text-xl mb-2">Sesi Diamankan</h2>
-              <p className="text-zinc-500 text-sm">Menghapus data sesi Super Bank Express...</p>
+              <p className="text-zinc-500 text-sm">Menghapus data sesi E-Express...</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2598,6 +2728,30 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
         user={{ ...user, uid: firebaseUser?.uid }} 
         onClose={() => setShowReceive(false)} 
       />
+    )}
+    {showCardManager && (
+      <CardManagerModal 
+        userName={user.name} 
+        accountId={user.accountId} 
+        onClose={() => setShowCardManager(false)} 
+      />
+    )}
+    {showMoreServices && (
+      <MoreServicesModal 
+        onClose={() => setShowMoreServices(false)} 
+        onPayment={(biller, amount, account, category) => {
+          handleTransferComplete(biller, amount, 'Biller', category, account);
+          setShowMoreServices(false);
+          setNotification(`Pembayaran ${biller} berhasil`);
+        }}
+        balance={balance}
+      />
+    )}
+    {showNotifications && (
+      <NotificationsModal onClose={() => setShowNotifications(false)} />
+    )}
+    {showSearch && (
+      <SearchModal onClose={() => setShowSearch(false)} />
     )}
   </AnimatePresence>
 
@@ -2683,21 +2837,15 @@ const TransferFlow = ({ onTransferComplete, onClose, balance, categories }: { on
           </motion.div>
         )}
 
-        {showLogoutConfirm && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-6">
-            <motion.div className="w-full max-w-xs bg-zinc-900 rounded-[40px] p-8 border border-zinc-800 shadow-2xl text-center">
-               <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <X className="text-red-500 w-8 h-8" />
-               </div>
-               <h3 className="text-xl font-bold text-white mb-2">Yakin ingin keluar?</h3>
-               <p className="text-zinc-500 text-sm mb-8">Data transaksi dan saldo Anda akan tetap aman tersimpan.</p>
-               <div className="flex flex-col gap-2">
-                  <button onClick={handleLogout} className="w-full py-4 bg-red-500 rounded-2xl font-bold text-white">Logout</button>
-                  <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-4 text-zinc-500 font-bold">Batal</button>
-               </div>
-            </motion.div>
-          </motion.div>
-        )}
+        <ConfirmationDialog 
+          isOpen={confirmation.isOpen}
+          onClose={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
+          onConfirm={confirmation.onConfirm}
+          title={confirmation.title}
+          message={confirmation.message}
+          isDanger={confirmation.isDanger}
+          icon={confirmation.icon}
+        />
       </AnimatePresence>
     </div>
   );

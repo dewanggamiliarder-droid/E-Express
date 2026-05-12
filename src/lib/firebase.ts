@@ -9,31 +9,40 @@ import {
   browserLocalPersistence
 } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer, enableIndexedDbPersistence } from 'firebase/firestore';
+import firebaseAppletConfig from '../../firebase-applet-config.json';
 
-// Validate required environment variables
-const requiredEnvVars = [
-  'VITE_FIREBASE_API_KEY',
-  'VITE_FIREBASE_AUTH_DOMAIN',
-  'VITE_FIREBASE_PROJECT_ID'
-];
-
-requiredEnvVars.forEach(key => {
-  if (!import.meta.env[key]) {
-    console.warn(`Missing environment variable: ${key}`);
+// Validate required environment variables and initialize Firebase
+const getEnvVar = (key: string): string => {
+  const value = import.meta.env[key];
+  if (!value) {
+    if (import.meta.env.DEV) {
+      console.warn(`Environment variable ${key} is missing. Please check your .env file.`);
+    }
+    return '';
   }
-});
-
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  firestoreDatabaseId: "ai-studio-44ca32d2-5765-43de-8290-c1da92a570a8"
+  return value;
 };
 
-const app = initializeApp(firebaseConfig);
+// Use environment variables for API keys and config from JSON as fallback/defaults
+const firebaseConfig = {
+  apiKey: getEnvVar('VITE_FIREBASE_API_KEY') || firebaseAppletConfig.apiKey,
+  authDomain: getEnvVar('VITE_FIREBASE_AUTH_DOMAIN') || firebaseAppletConfig.authDomain,
+  projectId: getEnvVar('VITE_FIREBASE_PROJECT_ID') || firebaseAppletConfig.projectId,
+  storageBucket: getEnvVar('VITE_FIREBASE_STORAGE_BUCKET') || firebaseAppletConfig.storageBucket,
+  messagingSenderId: getEnvVar('VITE_FIREBASE_MESSAGING_SENDER_ID') || firebaseAppletConfig.messagingSenderId,
+  appId: getEnvVar('VITE_FIREBASE_APP_ID') || firebaseAppletConfig.appId,
+  firestoreDatabaseId: firebaseAppletConfig.firestoreDatabaseId
+};
+
+// Ensure initializeApp is called only once
+let app;
+try {
+  app = initializeApp(firebaseConfig);
+} catch (e) {
+  console.error("Firebase initialization failed:", e);
+  throw e;
+}
+
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); 
 export const auth = getAuth(app);
 
@@ -43,6 +52,8 @@ setPersistence(auth, browserLocalPersistence).catch((error) => {
 });
 
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('https://www.googleapis.com/auth/userinfo.email');
+googleProvider.addScope('https://www.googleapis.com/auth/userinfo.profile');
 // Force select account during login
 googleProvider.setCustomParameters({
   prompt: 'select_account'
